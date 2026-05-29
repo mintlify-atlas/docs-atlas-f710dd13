@@ -1,0 +1,146 @@
+---
+title: "Signing APK Packages with melange keygen and sign"
+sidebarTitle: "Signing"
+description: "Generate an RSA signing key, sign APK packages and index files with melange, and enable consumers to verify package integrity using the public key."
+---
+
+APK packages are signed with an RSA key pair so that package managers can verify that a package was produced by a trusted source and has not been tampered with. melange provides three commands to manage this workflow: `melange keygen` to create a key pair, `melange sign` to sign individual APK files, and `melange sign-index` to sign an `APKINDEX.tar.gz` repository index. Signing can also happen automatically during `melange build` by passing `--signing-key`.
+
+## Generating a key pair
+
+Use `melange keygen` to create a new RSA private/public key pair:
+
+```shell
+melange keygen
+```
+
+```
+generating keypair with a 4096 bit prime, please wait...
+wrote private key to melange.rsa
+wrote public key to melange.rsa.pub
+```
+
+By default the key file is named `melange.rsa` (private) and `melange.rsa.pub` (public). Pass an explicit path to choose a different name:
+
+```shell
+melange keygen local-melange.rsa
+```
+
+### Key size
+
+The default prime size is 4096 bits. Adjust it with `--key-size`:
+
+```shell
+melange keygen --key-size 2048 my-package-signing.rsa
+```
+
+<Warning>
+  Keep your private key (`.rsa`) secret. Commit only the public key (`.rsa.pub`) to version control or distribute it alongside your repository so consumers can verify packages.
+</Warning>
+
+## Signing during build
+
+Pass `--signing-key` to `melange build` to sign every produced APK and the generated index in one step:
+
+```shell
+melange build melange.yaml --signing-key melange.rsa
+```
+
+When `--generate-index` is enabled (the default), the resulting `APKINDEX.tar.gz` is also signed automatically.
+
+## Signing existing APK files
+
+If you have APK files on disk that were not signed at build time — or need to re-sign them — use `melange sign`:
+
+```shell
+# Sign a single APK
+melange sign --signing-key melange.rsa packages/x86_64/hello-2.12-r0.apk
+
+# Sign all APKs in a directory
+melange sign --signing-key melange.rsa packages/x86_64/*.apk
+```
+
+The APK file is replaced in place with a version that contains the new signature. The default key name is `local-melange.rsa`, so if your key is named that you can omit `--signing-key`:
+
+```shell
+melange sign packages/x86_64/hello-2.12-r0.apk
+```
+
+### `melange sign` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--signing-key`, `-k` | `local-melange.rsa` | Path to the RSA private key used to sign. |
+
+## Signing a repository index
+
+An `APKINDEX.tar.gz` file lists all packages in a repository and must be signed so that `apk add` can verify the repository as a whole. Use `melange sign-index`:
+
+```shell
+melange sign-index --signing-key melange.rsa packages/x86_64/APKINDEX.tar.gz
+```
+
+To overwrite an existing signature with a completely new one, use `--force`:
+
+```shell
+melange sign-index --signing-key melange.rsa --force packages/x86_64/APKINDEX.tar.gz
+```
+
+### `melange sign-index` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--signing-key` | `melange.rsa` | Path to the RSA private key used to sign the index. |
+| `--force`, `-f` | `false` | Overwrite the index with a freshly signed version rather than appending a signature. |
+
+## Full signing workflow
+
+<Steps>
+  <Step title="Generate a key pair">
+    ```shell
+    melange keygen
+    ```
+    This produces `melange.rsa` (private key) and `melange.rsa.pub` (public key).
+  </Step>
+  <Step title="Build and sign in one command">
+    ```shell
+    melange build melange.yaml --signing-key melange.rsa
+    ```
+    APK files are written to `./packages/{arch}/` and signed. The `APKINDEX.tar.gz` is generated and signed as well.
+  </Step>
+  <Step title="Distribute the public key">
+    Share `melange.rsa.pub` with anyone who needs to install packages from your repository. They add it to their APK keyring:
+    ```shell
+    apk add --allow-untrusted melange.rsa.pub
+    # or copy it to /etc/apk/keys/
+    cp melange.rsa.pub /etc/apk/keys/
+    ```
+  </Step>
+  <Step title="Verify (optional)">
+    When a user runs `apk add` against your repository, `apk` verifies each package signature and the index signature using the public key. No additional steps are required by the consumer.
+  </Step>
+</Steps>
+
+## Using the key in melange test
+
+When testing locally built packages, pass the public key to `melange test` so the APK resolver can verify signatures on your local packages:
+
+```shell
+melange test ./melange.yaml \
+  --keyring-append ./melange.rsa.pub \
+  --repository-append ./packages
+```
+
+## SLSA provenance
+
+melange can generate [SLSA](https://slsa.dev/) provenance attestations alongside your APK files. Pass `--generate-provenance` to `melange build`:
+
+```shell
+melange build melange.yaml --signing-key melange.rsa --generate-provenance
+```
+
+For each APK, melange produces a corresponding `.attest.tar.gz` file in the same output directory containing the SLSA provenance document. Provenance records the build inputs (source repository, commit, configuration file) and the outputs (APK file hashes), creating an auditable chain of custody from source to package.
+
+<Tip>
+  Combine `--generate-provenance` with `--git-repo-url` and `--git-commit` to embed accurate source location metadata in the provenance document. melange will attempt to detect these automatically from the local git configuration, but explicit values are more reliable in CI environments.
+</Tip>

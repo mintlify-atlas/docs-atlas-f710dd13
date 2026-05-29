@@ -1,0 +1,183 @@
+---
+title: "melange build: Compile APK Packages from YAML Config"
+sidebarTitle: "build"
+description: "Full reference for melange build — flags, runner options, architecture selection, signing, caching, SBOM provenance, and example invocations."
+---
+
+`melange build` is the core command that reads a declarative YAML pipeline file and produces one or more `.apk` package files. It provisions a sandboxed build environment, fetches sources, executes every pipeline step, runs the configured linters, and writes the finished packages to the output directory (default `./packages/`). Builds can target multiple CPU architectures in a single invocation, running each architecture's build concurrently.
+
+## Usage
+
+```shell
+melange build [config.yaml] [flags]
+```
+
+The positional argument is optional. When omitted, melange looks for a config file in the current directory based on the pipeline configuration.
+
+## Basic examples
+
+```shell
+# Build for the host architecture using bubblewrap (Linux default)
+melange build crane.yaml
+
+# Build for multiple architectures at once
+melange build crane.yaml --arch x86_64,aarch64
+
+# Build and sign in one step
+melange build crane.yaml --signing-key local-melange.rsa
+
+# Build inside Docker (useful on macOS)
+melange build crane.yaml --runner docker
+
+# Build with extra Alpine/Wolfi repositories and keys
+melange build crane.yaml \
+  --repository-append https://packages.wolfi.dev/os \
+  --keyring-append https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+```
+
+## Output structure
+
+By default, packages are written to `./packages/` with one subdirectory per architecture:
+
+```
+packages/
+├── x86_64/
+│   ├── crane-0.19.1-r0.apk
+│   └── APKINDEX.tar.gz
+└── aarch64/
+    ├── crane-0.19.1-r0.apk
+    └── APKINDEX.tar.gz
+```
+
+The `APKINDEX.tar.gz` repository index is generated automatically unless `--generate-index=false` is passed.
+
+## Flags
+
+### Output
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--out-dir` | `./packages/` | Directory where built APKs and the index are written |
+| `--generate-index` | `true` | Automatically create `APKINDEX.tar.gz` after the build |
+| `--create-build-log` | `false` | Write a `package.log` listing every package built |
+| `--dependency-log` | _(empty)_ | Log resolved dependencies to the specified file |
+| `--persist-lint-results` | `false` | Write lint results as JSON files under `packages/{arch}/` |
+
+### Build environment
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--source-dir` | _(config file dir)_ | Directory containing patches and other included sources |
+| `--workspace-dir` | _(temp dir)_ | Path mounted as `/home/build` inside the build sandbox |
+| `--pipeline-dir` | _(empty)_ | Extra directory to search for named pipeline definitions |
+| `--pipeline-dirs` | _(empty)_ | Additional directories for pipeline definitions (plural form) |
+| `--env-file` | _(empty)_ | Files containing environment variables to pre-load |
+| `--vars-file` | _(empty)_ | File containing build configuration variables |
+| `--build-option` | _(empty)_ | Named build options to enable (defined in the config's `options:` block) |
+| `--empty-workspace` | `false` | Start with an empty workspace instead of pre-populating it |
+| `--build-date` | _(empty)_ | Override file timestamps inside the package (for reproducibility) |
+| `--timeout` | _(none)_ | Maximum wall-clock duration for the build (e.g. `30m`, `2h`) |
+| `--package-append` | _(empty)_ | Extra APK packages to install in every build environment |
+| `--keyring-append` / `-k` | _(empty)_ | Extra public key files to trust in the build environment |
+| `--repository-append` / `-r` | _(empty)_ | Extra APK repository URLs or paths to add |
+| `--ignore-signatures` | `false` | Skip repository signature verification |
+| `--override-host-triplet-libc-substitution-flavor` | `gnu` | libc flavor for `${{host.triplet.*}}` substitutions (`gnu` or `musl`) |
+
+### Architecture
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--arch` | _(all from config)_ | Comma-separated list of target architectures: `x86_64`, `aarch64`, `ppc64le`, `arm`, `s390x`, etc. |
+
+<Tip>
+If neither `--arch` nor `target-architecture` in the config specifies anything, melange builds for all architectures supported by the config's `environment`.
+</Tip>
+
+### Runner
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--runner` | _(platform default)_ | Sandbox runner: `bubblewrap` (Linux), `docker` (macOS/Windows), or `qemu` |
+| `--cpu` | _(none)_ | CPU resource limit passed to the runner |
+| `--cpumodel` | _(none)_ | CPU model string (used by QEMU runner) |
+| `--memory` | _(none)_ | Memory resource limit |
+| `--disk` | _(none)_ | Disk size for the build environment |
+| `--rm` | `true` | Clean up containers/temp dirs after the build |
+| `--cleanup` | `true` | Remove the guest temp directory after completion |
+| `--debug-runner` | `false` | Keep the runner (container/VM) alive after build completes or fails |
+| `--interactive` / `-i` | `false` | Attach a TTY to the build sandbox on failure for interactive debugging |
+
+<Note>
+On Linux, melange defaults to the **bubblewrap** runner, which requires no extra setup. On macOS and Windows the **docker** runner is used automatically — Docker Desktop must be running.
+</Note>
+
+### Signing
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--signing-key` | _(empty)_ | RSA private key file used to sign the built APKs |
+
+### Caching
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cache-dir` | `./melange-cache/` | Local directory for source artifact caching |
+| `--cache-source` | _(empty)_ | Pre-populate the cache from this directory or GCS/S3 bucket |
+| `--apk-cache-dir` | _(system cache)_ | Directory for caching downloaded APK packages |
+
+### Provenance and SBOM
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--generate-provenance` | `false` | Emit a SLSA provenance attestation as a `.attest.tar.gz` beside each APK |
+| `--namespace` | `unknown` | Namespace for package URLs in the generated SBOM (e.g. `wolfi`, `alpine`) |
+| `--git-commit` | _(auto-detected)_ | Git commit hash of the config file's repository |
+| `--git-repo-url` | _(auto-detected)_ | URL of the repository containing the config file |
+| `--license` | `NOASSERTION` | SPDX license identifier for the build config file itself |
+
+### Linting
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lint-require` | `dev,infodir,libtool/la-files,setuidgid,tempdir,usrmerge,varempty,worldwrite` | Linters that cause build failure when triggered |
+| `--lint-warn` | `binaryarch,cudaruntimelib,dll,duplicate,dylib,lddcheck,maninfo,nonlinux,object,opt,pkgconf,python/docs,python/multiple,python/test,sbom,srv,staticarchive,strip,unsupportedarch,usrlocal` | Linters that emit warnings but do not fail the build |
+
+### Debugging
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--debug` | `false` | Enable verbose pipeline step logging (sets `-x` in shell steps) |
+| `--trace` | _(empty)_ | Write OpenTelemetry trace output to the specified file |
+| `--strip-origin-name` | `false` | Strip origin package names from subpackages (used for bootstrapping) |
+
+## Docker runner example
+
+When building on macOS or in environments without bubblewrap, use the Docker runner:
+
+```shell
+docker run --rm --privileged \
+  -v "$(pwd)":/work \
+  -w /work \
+  cgr.dev/chainguard/melange \
+  build package.yaml \
+    --arch x86_64 \
+    --runner docker \
+    --signing-key local-melange.rsa
+```
+
+## SLSA provenance
+
+Passing `--generate-provenance` produces a signed attestation file next to each APK:
+
+```shell
+melange build package.yaml \
+  --generate-provenance \
+  --namespace wolfi \
+  --signing-key signing.rsa
+```
+
+This creates `packages/x86_64/mypackage-1.0.0-r0.apk.attest.tar.gz` alongside the APK.
+
+<Warning>
+The `--fail-on-lint-warning` flag is **deprecated**. Use `--lint-require` and `--lint-warn` to control which checks are enforced vs. advisory.
+</Warning>

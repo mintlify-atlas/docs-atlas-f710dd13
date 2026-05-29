@@ -1,0 +1,221 @@
+---
+title: "Checking Out Source Code with melange's git Pipelines"
+sidebarTitle: "Git Pipelines"
+description: "Use melange's git-checkout and git-am pipelines to clone repositories, pin commits for reproducibility, and apply CVE cherry-picks to builds."
+---
+
+Melange provides two built-in pipelines for working with git repositories: `git-checkout` for cloning and verifying source trees, and `git-am` for applying patch files using `git am`. Together they give you a reproducible, supply-chain-aware way to obtain upstream source code and incorporate security patches without modifying the upstream repository.
+
+## `git-checkout`
+
+The `git-checkout` pipeline clones a remote git repository into the workspace. It supports shallow clones, branch and tag pinning, commit hash verification, submodule recursion, sparse checkout for monorepos, cherry-picks for CVE patches, and exponential-backoff retries for flaky network connections.
+
+### Inputs
+
+| Input | Default | Required | Description |
+|---|---|---|---|
+| `repository` | — | ✅ | URL of the repository to clone |
+| `destination` | `.` | — | Local path to clone into (relative to workspace) |
+| `tag` | — | — | Tag to check out. Mutually exclusive with `branch`. |
+| `branch` | — | — | Branch to check out. Mutually exclusive with `tag`. |
+| `expected-commit` | — | — | Expected commit SHA-1 hash. Fails the build if the resolved commit does not match. |
+| `depth` | `1` (or `-1` when `branch`+`expected-commit` are both set) | — | Clone depth. Use `-1` for full history. |
+| `recurse-submodules` | `false` | — | Pass `--recurse-submodules` to `git clone` |
+| `shallow-submodules` | `false` | — | Use `--shallow-submodules` when recursing (requires `recurse-submodules: true`) |
+| `submodule-jobs` | `1` | — | Concurrent jobs for submodule cloning |
+| `cherry-picks` | — | — | Newline-separated list of cherry-picks to apply after checkout |
+| `sparse-paths` | — | — | Directories to check out in sparse (cone-mode) checkout |
+| `type-hint` | — | — | Source type hint for SBOM generation (e.g. `gitlab`) |
+| `max-retries` | `3` | — | Maximum clone retry attempts |
+| `initial-backoff` | `2` | — | Initial backoff in seconds before first retry |
+| `max-backoff` | `60` | — | Maximum backoff in seconds between retries |
+| `reason` | — | — | Human-readable reason for using a mutable reference |
+
+### Basic usage
+
+The most common pattern pins to a release tag and verifies the expected commit hash:
+
+```yaml
+- uses: git-checkout
+  with:
+    repository: https://github.com/puerco/hello.git
+    tag: v${{package.version}}
+    expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+```
+
+<Warning>
+  Always set `expected-commit` for production builds. Without it, the build warns but proceeds. A matching commit hash ensures that the tag has not been force-pushed to a different commit between builds — a critical supply-chain integrity guarantee.
+</Warning>
+
+### Checking out different references
+
+The `examples/git-checkout.yaml` file demonstrates several reference styles in a single build:
+
+```yaml
+package:
+  name: git-checkout
+  version: v0.0.1
+  epoch: 0
+  description: "A project that will checkout the same repo different ways"
+  checks:
+    disabled:
+      - empty
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - wolfi-base
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/puerco/hello.git
+      destination: default
+
+  - uses: git-checkout
+    with:
+      repository: https://github.com/puerco/hello.git
+      destination: branch
+      branch: main
+
+  - uses: git-checkout
+    with:
+      repository: https://github.com/puerco/hello.git
+      destination: tag
+      tag: v0.0.1
+      expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+
+  - uses: git-checkout
+    with:
+      repository: https://github.com/puerco/hello.git
+      destination: tag-unpeeled
+      tag: v0.0.1
+      expected-commit: fed9b28e2973bee65bcc503c6ab6522e8bfdd3d1
+
+  - uses: git-checkout
+    with:
+      repository: https://gitlab.com/xnox/hello.git
+      destination: gitlab
+      tag: v0.0.1
+      expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+```
+
+<Note>
+  When an annotated tag is used, `expected-commit` can be set to either the tag object hash or the underlying commit hash. If the tag object hash is provided, melange emits a warning recommending that you update to the commit hash, but the build succeeds.
+</Note>
+
+### Cherry-picking commits for CVE patches
+
+The `cherry-picks` input lets you apply specific upstream commits on top of a checked-out tag. This is the recommended way to backport security fixes to a stable release without changing the base tag.
+
+Each entry in the `cherry-picks` list has the format:
+
+```
+[branch/]commit-id: comment explaining the cherry-pick
+```
+
+The branch prefix tells the pipeline which remote branch to fetch the commit from. Without it, `git cherry-pick` may fail because the commit is not reachable from the shallow clone. The comment after `:` is required and serves as documentation.
+
+**Example — patching CPython for CVE-2024-4032:**
+
+```yaml
+pipeline:
+  - uses: git-checkout
+    with:
+      expected-commit: 976ea78599d71f22e9c0fefc2dc37c1d9fc835a4
+      repository: https://github.com/python/cpython.git
+      tag: v3.10.14
+      cherry-picks: |
+        3.10/c62c9e518b784fe44432a3f4fc265fb95b651906: CVE-2024-4032
+```
+
+The pipeline fetches branch `3.10` from `origin`, then cherry-picks commit `c62c9e518b784fe44432a3f4fc265fb95b651906` on top of the checked-out tag.
+
+<Tip>
+  Multiple cherry-picks are supported — add one entry per line. Empty lines and lines beginning with `#` are ignored, so you can annotate your cherry-picks list with comments.
+</Tip>
+
+### Submodules
+
+For repositories with submodules, enable recursive cloning:
+
+```yaml
+- uses: git-checkout
+  with:
+    repository: https://github.com/example/project.git
+    tag: v1.0.0
+    expected-commit: abc123...
+    recurse-submodules: true
+    submodule-jobs: 4
+    shallow-submodules: true
+```
+
+### Sparse checkout for monorepos
+
+When working with large monorepos, use `sparse-paths` to check out only the directories you need. The pipeline uses cone-mode sparse checkout for optimal performance:
+
+```yaml
+- uses: git-checkout
+  with:
+    repository: https://github.com/example/monorepo.git
+    tag: v1.0.0
+    expected-commit: abc123...
+    sparse-paths: |
+      mypackage
+      shared/lib
+```
+
+---
+
+## `git-am`
+
+The `git-am` pipeline applies patch files to the checked-out repository using `git am`. It is an alternative to the `patch` pipeline that preserves git history for the applied patches.
+
+### Inputs
+
+| Input | Default | Required | Description |
+|---|---|---|---|
+| `patches` | — | ✅ | Whitespace-delimited list of patch file paths |
+
+Patch paths are resolved relative to the workspace root — the directory where melange copies the contents of `--source-dir` (defaulting to the directory containing the melange YAML file). This assumes `git-checkout` cloned into the default destination (`.`).
+
+### Example
+
+```yaml
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/example/project.git
+      tag: v2.1.0
+      expected-commit: def456...
+
+  - uses: git-am
+    with:
+      patches: 0001-fix-security-issue.patch 0002-backport-fix.patch
+```
+
+<Note>
+  Place patch files in your package's source directory alongside the melange YAML file. Melange copies that directory into the workspace root before the pipeline runs, making them available at the paths you specify in `patches:`.
+</Note>
+
+## Supply-chain integrity with `expected-commit`
+
+Using `expected-commit` in combination with a `tag` provides two layers of verification:
+
+1. **Tag integrity** — confirms that the tag still resolves to the expected commit (guards against force-pushed tags).
+2. **Annotated tag support** — for annotated tags, either the tag object hash or the underlying commit hash is accepted. Melange warns when the tag object hash is used and recommends switching to the commit hash for stricter verification.
+
+For builds that check out a branch rather than a tag, set `depth: -1` alongside `expected-commit` to allow melange to reset to the expected commit when the branch tip has moved:
+
+```yaml
+- uses: git-checkout
+  with:
+    repository: https://github.com/example/project.git
+    branch: release/2.x
+    expected-commit: abc123...
+    depth: -1
+```

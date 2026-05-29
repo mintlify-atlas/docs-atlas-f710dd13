@@ -1,0 +1,120 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "melange",
+  "projectDescription": "A declarative, pipeline-oriented build tool that compiles APK packages from source code for Alpine Linux and Wolfi ecosystems.",
+  "theme": "aspen",
+  "primaryColor": "#0c5c7c",
+  "lightColor": "#cddce3",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Build Configuration",
+            "pages": [
+              "configuration/build-file",
+              "configuration/environment",
+              "configuration/substitutions",
+              "configuration/var-transforms",
+              "configuration/build-options"
+            ]
+          },
+          {
+            "group": "Pipelines",
+            "pages": [
+              "pipelines/overview",
+              "pipelines/built-in",
+              "pipelines/go",
+              "pipelines/cargo",
+              "pipelines/git",
+              "pipelines/custom"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/build-process",
+              "guides/build-cache",
+              "guides/testing",
+              "guides/linting",
+              "guides/signing",
+              "guides/multi-arch"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Command Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "commands/overview",
+              "commands/build",
+              "commands/test",
+              "commands/lint",
+              "commands/keygen",
+              "commands/sign",
+              "commands/index",
+              "commands/bump",
+              "commands/query",
+              "commands/convert"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Declarative YAML-based package build configuration",
+    "Pipeline-oriented builds with full control over every build step",
+    "Multi-architecture builds via QEMU emulation (x86_64, aarch64, armv7, etc.)",
+    "Built-in pipelines for popular ecosystems: Go, Rust/Cargo, Python, Ruby, Maven, npm, Perl",
+    "Integrated package signing with RSA keys",
+    "Post-build linting to catch common packaging mistakes",
+    "Built-in test framework using the same pipeline DSL",
+    "Build cache support for Go modules, pip, npm, Composer, Maven, and uv",
+    "SLSA provenance generation",
+    "SBOM (Software Bill of Materials) generation",
+    "Integration with apko for building minimal OCI container images",
+    "Custom pipeline support via --pipeline-dir flag"
+  ],
+  "publicApiSurface": [
+    "melange build",
+    "melange test",
+    "melange lint",
+    "melange keygen",
+    "melange sign",
+    "melange sign-index",
+    "melange index",
+    "melange bump",
+    "melange query",
+    "melange compile",
+    "melange scan",
+    "melange source",
+    "melange convert",
+    "melange update-cache",
+    "melange package-version",
+    "melange version",
+    "melange completion",
+    "melange initramfs",
+    "package: (YAML field)",
+    "environment: (YAML field)",
+    "pipeline: (YAML field)",
+    "subpackages: (YAML field)",
+    "var-transforms: (YAML field)",
+    "update: (YAML field)",
+    "test: (YAML field)",
+    "options: (YAML field)"
+  ]
+}

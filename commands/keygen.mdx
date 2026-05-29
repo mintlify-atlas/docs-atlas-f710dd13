@@ -1,0 +1,77 @@
+---
+title: "melange keygen: Generate RSA Signing Key Pairs"
+sidebarTitle: "keygen"
+description: "Reference for melange keygen — generate RSA private/public key pairs for signing APK packages and repository indexes built with melange."
+---
+
+`melange keygen` generates an RSA key pair for signing APK packages and repository indexes. The private key (`.rsa`) is kept secret and passed to `melange build --signing-key` or `melange sign`. The public key (`.rsa.pub`) is distributed alongside the repository so that package managers can verify package authenticity. Key generation is a one-time setup step — the same key pair can be reused across many builds.
+
+## Usage
+
+```shell
+melange keygen [key-name.rsa] [flags]
+```
+
+The positional argument sets the output filename for the private key. The public key is written to the same path with `.pub` appended. When omitted, the default filename `local-melange.rsa` is used.
+
+## Examples
+
+```shell
+# Generate a key pair with the default filename (local-melange.rsa)
+melange keygen
+
+# Generate a key pair with a custom name
+melange keygen signing.rsa
+
+# Generate a 2048-bit key (smaller, faster — not recommended for production)
+melange keygen --key-size 2048 signing.rsa
+```
+
+## Output files
+
+Running `melange keygen signing.rsa` produces two files:
+
+```
+signing.rsa        ← RSA private key (keep this secret)
+signing.rsa.pub    ← RSA public key (distribute this with your repository)
+```
+
+<Warning>
+Keep the `.rsa` private key file secure. Anyone with access to it can sign packages that will be trusted by systems configured to use your public key.
+</Warning>
+
+## Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--key-size` | `4096` | Size of the RSA key in bits |
+
+### Inherited
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Using the generated key
+
+After generating a key pair, pass the private key to `melange build` to sign packages during the build:
+
+```shell
+# Generate key
+melange keygen local-melange.rsa
+
+# Build and sign in one step
+melange build package.yaml --signing-key local-melange.rsa
+
+# Or sign already-built packages separately
+melange sign --signing-key local-melange.rsa packages/x86_64/*.apk
+
+# Sign the repository index
+melange sign-index --signing-key local-melange.rsa packages/x86_64/APKINDEX.tar.gz
+```
+
+To allow Alpine or Wolfi-based systems to trust packages from your repository, copy the `.rsa.pub` file to `/etc/apk/keys/` on those systems, or include it in your `apk add` invocation with the `--allow-untrusted` flag during testing.
+
+<Tip>
+The default key size of 4096 bits provides a strong security margin. Use 2048 bits only in constrained environments where key generation time is a bottleneck — for example, ephemeral CI containers that generate a fresh key on every run.
+</Tip>

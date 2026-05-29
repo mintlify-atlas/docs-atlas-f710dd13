@@ -1,0 +1,158 @@
+---
+title: "Template Substitutions in melange Build Files"
+sidebarTitle: "Substitutions"
+description: "Reference for all built-in melange template substitutions, including package, targets, build, and context variables, plus custom vars."
+---
+
+melange build files support template substitutions — placeholders that are resolved to their actual values at build time. Substitutions let you write pipeline steps that remain correct across version bumps, architecture changes, and subpackage splits without hardcoding strings. All substitutions use the `${{...}}` syntax and can appear in any string value inside the YAML document, including `runs:` commands, `with:` parameters, and `dependencies:` declarations.
+
+---
+
+## Built-in substitutions
+
+The following table lists every default substitution provided by melange. These are derived automatically from the build file and the current build context — no extra configuration is required.
+
+### Package substitutions
+
+| Substitution | Description |
+|---|---|
+| `${{package.name}}` | The package name as declared in `package.name` |
+| `${{package.version}}` | The package version as declared in `package.version` |
+| `${{package.epoch}}` | The package epoch as declared in `package.epoch` |
+| `${{package.full-version}}` | Shorthand for `${{package.version}}-r${{package.epoch}}` |
+| `${{package.description}}` | The package description string |
+| `${{package.srcdir}}` | The source directory inside the build sandbox (`/home/build` by default, or the value of `--source-dir`) |
+
+### Context substitutions
+
+| Substitution | Description |
+|---|---|
+| `${{subpkg.name}}` | The name of the current subpackage (only valid inside a `subpackages:` pipeline) |
+| `${{context.name}}` | The name of the current package or subpackage being processed |
+
+### Target directory substitutions
+
+| Substitution | Description |
+|---|---|
+| `${{targets.outdir}}` | Root output directory where all package staging trees live (`/home/build/melange-out`) |
+| `${{targets.destdir}}` | Staging directory for the **main** package (`/home/build/melange-out/<package.name>`) |
+| `${{targets.contextdir}}` | Staging directory for the current package context (main package or current subpackage) |
+| `${{targets.subpkgdir}}` | Staging directory for the current **subpackage** |
+
+### Build architecture substitutions
+
+| Substitution | Description |
+|---|---|
+| `${{build.arch}}` | APK architecture of the current build (e.g. `x86_64`, `aarch64`) |
+| `${{build.goarch}}` | Go architecture string of the current build (e.g. `amd64`, `arm64`) |
+
+### Host and cross-compilation triplet substitutions
+
+| Substitution | Description |
+|---|---|
+| `${{host.triplet.gnu}}` | GNU target triplet for the host architecture |
+| `${{host.triplet.rust}}` | Rust target triplet for the host architecture |
+| `${{cross.triplet.gnu.glibc}}` | GNU/glibc cross-compilation triplet |
+| `${{cross.triplet.gnu.musl}}` | GNU/musl cross-compilation triplet |
+| `${{cross.triplet.rust.glibc}}` | Rust/glibc cross-compilation triplet |
+| `${{cross.triplet.rust.musl}}` | Rust/musl cross-compilation triplet |
+
+---
+
+## Using substitutions in pipeline steps
+
+Substitutions work in any string value in the build file. The most common use cases are constructing download URIs, setting install paths, and creating directories.
+
+### Fetching a versioned source archive
+
+```yaml
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+```
+
+### Creating a directory with the package name
+
+```yaml
+pipeline:
+  - name: Create tmp dir
+    runs: mkdir -p ${{targets.destdir}}/var/lib/${{package.name}}/tmp
+```
+
+### Architecture-conditional step
+
+```yaml
+pipeline:
+  - if: ${{build.arch}} == 'x86_64'
+    runs: |
+      echo "Running x86_64-specific step"
+```
+
+### Subpackage staging
+
+Inside a `subpackages:` pipeline entry, use `${{targets.subpkgdir}}` to install files into the subpackage's staging tree:
+
+```yaml
+subpackages:
+  - name: libcurl-openssl4
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}"/usr/lib
+          mv "${{targets.destdir}}"/usr/lib/libcurl.so.* "${{targets.subpkgdir}}"/usr/lib/
+```
+
+### Providing a virtual package alias
+
+The `${{package.full-version}}` substitution is particularly useful when declaring virtual package aliases, because it automatically picks up the current `version` and `epoch` values:
+
+```yaml
+dependencies:
+  provides:
+    - php=${{package.full-version}}
+```
+
+---
+
+## Custom variables with `vars:`
+
+Beyond the built-in substitutions, you can define your own variables in the `vars:` section. Custom variables are accessed with the `${{vars.<name>}}` syntax.
+
+```yaml
+vars:
+  with-openssl: --with-openssl
+  with-rustls: --without-rustls
+
+pipeline:
+  - uses: autoconf/configure
+    with:
+      opts: |
+        ${{vars.with-openssl}} \
+        ${{vars.with-rustls}}
+```
+
+<Tip>
+  Custom `vars:` are evaluated at parse time. If you need to derive a variable from another variable using a regex transformation — for example, to convert a version string from `17.0.7.5` to `17.0.7+5` — use [`var-transforms:`](/configuration/var-transforms) instead.
+</Tip>
+
+---
+
+## Variable resolution order
+
+melange resolves substitutions in the following order:
+
+<Steps>
+  <Step title="Built-in substitutions">
+    Package metadata (`${{package.*}}`), target directories (`${{targets.*}}`), and build context (`${{build.*}}`, `${{context.name}}`) are resolved first from the parsed configuration and current build state.
+  </Step>
+  <Step title="Custom vars">
+    Values from the `vars:` map are resolved next, keyed as `${{vars.<name>}}`.
+  </Step>
+  <Step title="var-transforms">
+    Regex-transformed variables declared in `var-transforms:` are resolved after the above, since they derive from other substitution values.
+  </Step>
+  <Step title="Build option overrides">
+    When a named build option is enabled (via `--build-option`), it can override `vars:` values, which then flow through the rest of the resolution chain.
+  </Step>
+</Steps>

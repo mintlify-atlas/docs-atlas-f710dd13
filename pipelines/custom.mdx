@@ -1,0 +1,192 @@
+---
+title: "Creating Custom Pipelines for melange Builds"
+sidebarTitle: "Custom Pipelines"
+description: "Write reusable custom pipeline YAML files and load them with --pipeline-dir to extend melange builds with project-specific or organisation-wide steps."
+---
+
+Melange's built-in pipelines cover the most common packaging workflows, but every software ecosystem has its own quirks. Custom pipelines let you encapsulate repeated build logic into reusable YAML files that work exactly like built-in pipelines — you invoke them with `uses:`, pass inputs with `with:`, and gate execution with `if:`. The only difference is that you tell melange where to find them using the `--pipeline-dir` flag.
+
+## Defining a custom pipeline
+
+A custom pipeline is a YAML file with the same structure as a built-in pipeline. At minimum it has a `pipeline:` section containing one or more steps. Optionally it declares `inputs:` to accept parameters from the caller.
+
+### File name = pipeline name
+
+Melange maps a pipeline's file path (relative to the pipeline directory, without `.yaml`) to its `uses:` name. A file named `conditional.yaml` in your custom pipeline directory is invoked as:
+
+```yaml
+pipeline:
+  - uses: conditional
+```
+
+A file at `myorg/deploy.yaml` would be invoked as:
+
+```yaml
+pipeline:
+  - uses: myorg/deploy
+```
+
+### Custom pipeline structure
+
+```yaml
+# inputs: declares the parameters callers can pass via with:
+inputs:
+  my-input:
+    description: |
+      What this input controls.
+    default: some-default
+    required: false   # set to true to make the input mandatory
+
+# pipeline: the steps that run when this pipeline is invoked
+pipeline:
+  - runs: |
+      echo "Running with input: ${{inputs.my-input}}"
+```
+
+## The `conditional.yaml` example
+
+The `examples/conditional.yaml` file in the melange repository shows how to combine `if:` expressions, sub-pipelines with `assertions:`, and `uses:` conditionals in a single build:
+
+```yaml
+package:
+  name: hello
+  version: 2.12
+  epoch: 0
+  description: "an example of how conditionals influence build behavior"
+  copyright:
+    - license: Not-Applicable
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - busybox
+
+pipeline:
+  # At least one of the sub-steps below must run for the build to pass
+  - assertions:
+      required-steps: 1
+    pipeline:
+      - if: ${{build.arch}} == 'x86_64'
+        runs: |
+          echo "build arch is x86_64!"
+      - if: ${{build.arch}} == 'aarch64'
+        runs: |
+          echo "build arch is aarch64!"
+
+  # Runs only when the package name matches
+  - if: ${{package.name}} == 'hello'
+    runs: |
+      echo "package name matches 'hello'!"
+
+  # This step is skipped because the condition is false
+  - if: ${{package.name}} != 'hello'
+    runs: |
+      echo "package name doesn't match hello!"
+
+  # Conditionally invoke a named pipeline
+  - uses: fetch
+    if: ${{package.name}} != 'hello'
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+
+  - runs: |
+      mkdir -p "${{targets.destdir}}"
+```
+
+This pattern is useful for building the same package differently on different architectures, or for skipping optional steps when certain conditions are not met.
+
+## Pointing melange to your custom pipelines
+
+Once your custom pipeline file exists on disk, pass its parent directory to melange using the `--pipeline-dir` flag. You can specify the flag multiple times to load pipelines from several directories.
+
+```shell
+melange build --pipeline-dir=/home/custom/pipelines/ mypackage.yaml
+```
+
+In a CI workflow step:
+
+```shell
+./melange build \
+  --pipeline-dir=/home/custom/pipelines/ \
+  --signing-key melange.rsa \
+  mypackage.yaml
+```
+
+<Note>
+  Melange searches `--pipeline-dir` directories before the built-in pipeline path. If you create a file named `fetch.yaml` in your custom directory, it will shadow the built-in `fetch` pipeline. Use unique names (such as namespaced subdirectories) to avoid accidental overrides.
+</Note>
+
+## Writing a custom pipeline with inputs
+
+Custom pipelines accept typed inputs from the caller through the `inputs:` block. Each input can have a description, a default value, and a `required` flag.
+
+The following example defines a custom pipeline that installs a pre-compiled binary from a well-known staging directory:
+
+```yaml
+# file: myorg/install-binary.yaml
+inputs:
+  binary-name:
+    description: |
+      The name of the binary to install.
+    required: true
+
+  install-dir:
+    description: |
+      Directory under /usr where the binary will be installed.
+    default: bin
+
+pipeline:
+  - runs: |
+      install -Dm755 \
+        "${{targets.contextdir}}/staging/${{inputs.binary-name}}" \
+        "${{targets.contextdir}}/usr/${{inputs.install-dir}}/${{inputs.binary-name}}"
+```
+
+The caller invokes it like any built-in pipeline:
+
+```yaml
+pipeline:
+  - uses: myorg/install-binary
+    with:
+      binary-name: mytool
+      install-dir: sbin
+```
+
+## Adding new built-in pipelines
+
+If your custom pipeline is broadly useful and belongs upstream, you can contribute it to the melange repository by adding a YAML file to `pkg/build/pipelines/`. After adding the file, rebuild melange locally to test it:
+
+```shell
+go install .
+```
+
+<Steps>
+  <Step title="Write the pipeline YAML">
+    Create your pipeline file in `pkg/build/pipelines/` (or a subdirectory for a new ecosystem). Follow the same `inputs:` / `pipeline:` structure used by existing pipelines.
+  </Step>
+  <Step title="Rebuild melange">
+    Run `go install .` from the repository root to install a development build that includes your new pipeline.
+  </Step>
+  <Step title="Test your pipeline">
+    Write a test melange YAML that invokes your pipeline and run `melange build` against it to verify the behaviour.
+  </Step>
+  <Step title="Bump the dependency in wolfictl">
+    For CI pipelines built on Wolfi, bump the melange dependency in `wolfi-dev/wolfictl`:
+
+    ```shell
+    go get chainguard.dev/melange@main
+    go mod tidy
+    ```
+
+    Then open a pull request. A new image containing your pipeline will be built when the workflow next runs.
+  </Step>
+</Steps>
+
+<Tip>
+  Until your pipeline is merged upstream, load it via `--pipeline-dir` in your local and CI builds. This lets you iterate quickly without waiting for a release.
+</Tip>

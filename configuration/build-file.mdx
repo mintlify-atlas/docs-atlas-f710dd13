@@ -1,0 +1,365 @@
+---
+title: "melange Build File Reference: YAML Schema"
+sidebarTitle: "Build File"
+description: "Complete reference for the melange YAML build file schema, covering all top-level sections from package metadata to pipelines and subpackages."
+---
+
+A melange build file is a YAML document that fully describes how to fetch, compile, and package software into an APK. Every build file must declare at minimum a `package` section with metadata, an `environment` section describing the build environment, and a `pipeline` section containing the ordered steps that produce the final package. Optional sections such as `subpackages`, `vars`, `var-transforms`, `data`, `options`, and `update` extend this baseline to support complex, multi-output builds and automated version tracking.
+
+## Top-level sections
+
+| Section | Required | Purpose |
+|---|---|---|
+| `package` | ✅ Yes | Package identity, version, copyright, and runtime dependencies |
+| `environment` | ✅ Yes | Build environment: repositories, packages, and env vars |
+| `pipeline` | ✅ Yes | Ordered steps that produce the package |
+| `subpackages` | No | Additional APK outputs from the same build |
+| `vars` | No | Custom template variables available across the pipeline |
+| `var-transforms` | No | Regex-based transformations of existing variables |
+| `data` | No | Arbitrary lists for generating multiple subpackages via `range` |
+| `update` | No | Configuration for automated version tracking |
+| `options` | No | Named deviations to the default build (e.g. swappable backends) |
+
+---
+
+## `package`
+
+The `package` section defines the identity and metadata of the APK being produced. The combination of `name`, `version`, and `epoch` forms the APK filename: `<name>-<version>-r<epoch>.apk`.
+
+<ParamField path="name" type="string" required>
+  Unique name for the package. By convention this matches the YAML filename without the extension and aligns with how the package is named in other distributions.
+
+  ```yaml
+  name: python-3.10
+  ```
+</ParamField>
+
+<ParamField path="version" type="string" required>
+  Upstream version of the package. This must be a valid APK version string — avoid characters such as `+` that have special meaning in APK (see [var-transforms](/configuration/var-transforms) for how to handle non-standard upstream version strings).
+
+  ```yaml
+  version: 3.10.12
+  ```
+</ParamField>
+
+<ParamField path="epoch" type="integer" required>
+  Monotonically increasing integer (starting at `0`) that distinguishes successive builds of the same upstream version — for example, when backporting a security patch without bumping the upstream version.
+
+  ```yaml
+  epoch: 0
+  ```
+</ParamField>
+
+<ParamField path="description" type="string">
+  Human-readable description of the package. This text appears in `apk search` and `apk info` output.
+
+  ```yaml
+  description: "the Python programming language"
+  ```
+</ParamField>
+
+<ParamField path="url" type="string">
+  URL to the package's upstream homepage.
+</ParamField>
+
+<ParamField path="commit" type="string">
+  Git commit hash of the package build configuration, used for tracking purposes.
+</ParamField>
+
+<ParamField path="target-architecture" type="list">
+  List of CPU architectures to build for. Valid values: `386`, `amd64`, `arm/v6`, `arm/v7`, `arm64`, `ppc64le`, `s390x`, `x86_64`, `aarch64`, or the special value `all`. Defaults to `all` when omitted.
+
+  ```yaml
+  target-architecture:
+    - x86_64
+    - aarch64
+  ```
+</ParamField>
+
+<ParamField path="copyright" type="list">
+  List of copyright entries for the package. Each entry can specify a `license` (SPDX identifier), optional `paths` (file globs), an `attestation` (free-form copyright text), and a `license-path` pointing to the on-disk license file.
+
+  ```yaml
+  copyright:
+    - license: Apache-2.0
+      paths:
+        - "*"
+    - license: BSD-3-Clause
+      paths:
+        - "vendor/foo/**"
+  ```
+</ParamField>
+
+<ParamField path="dependencies" type="object">
+  Runtime and virtual-package dependency declarations.
+
+  - `runtime` — packages required at install time (not build time)
+  - `provides` — virtual package aliases this package satisfies
+  - `replaces` — packages that this package supersedes
+
+  ```yaml
+  dependencies:
+    runtime:
+      - openssl
+      - ca-certificates-bundle
+    provides:
+      - php=${{package.full-version}}
+  ```
+</ParamField>
+
+<ParamField path="options" type="object">
+  SCA (Static Content Analysis) behaviour flags. All default to `false`.
+
+  - `no-provides` — virtual package that ships no files or libraries
+  - `no-depends` — self-contained package with no runtime dependencies
+  - `no-commands` — suppress scanning `/usr/bin` for command providers
+  - `no-versioned-shlib-deps` — do not generate versioned shared-library dependencies
+
+  ```yaml
+  options:
+    no-provides: true
+  ```
+</ParamField>
+
+<ParamField path="scriptlets" type="object">
+  Scripts executed during APK lifecycle events: `pre-install`, `post-install`, `pre-deinstall`, `post-deinstall`, `pre-upgrade`, and `post-upgrade`. Each script must include a shebang line.
+
+  ```yaml
+  scriptlets:
+    post-install: |
+      #!/bin/busybox sh
+      echo "Package installed"
+  ```
+</ParamField>
+
+<ParamField path="timeout" type="integer">
+  Maximum build duration in seconds. Useful for catching runaway builds.
+
+  ```yaml
+  timeout: 3600  # 1 hour
+  ```
+</ParamField>
+
+<ParamField path="resources" type="object">
+  Resource hints for external schedulers and the QEMU runner. Fields: `cpu` (string), `memory` (Kubernetes quantity, e.g. `"16Gi"`), `disk`, `cpumodel`.
+
+  ```yaml
+  resources:
+    cpu: "8"
+    memory: "16Gi"
+    disk: "100Gi"
+  ```
+</ParamField>
+
+---
+
+## `environment`
+
+The `environment` section specifies the build environment: which package repositories to use, which packages to install as build-time dependencies, and which environment variables to set. See [Configuring the Build Environment](/configuration/environment) for full details.
+
+```yaml
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - build-base
+      - busybox
+  environment:
+    CGO_ENABLED: "0"
+```
+
+<Note>
+  The `environment` block can only be defined at the top level. Subpackage build definitions cannot override it — though subpackage *test* definitions can specify their own environment.
+</Note>
+
+---
+
+## `pipeline`
+
+The `pipeline` section is an ordered list of steps that fetch sources, compile code, and install files into the staging directory. Each step can reference a built-in pipeline (`uses:`), run a shell command (`runs:`), or embed a sub-pipeline (`pipeline:`).
+
+```yaml
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+
+  - uses: autoconf/configure
+
+  - uses: autoconf/make
+
+  - uses: autoconf/make-install
+
+  - uses: strip
+```
+
+Steps support `if:` conditionals to gate execution based on build context:
+
+```yaml
+pipeline:
+  - if: ${{build.arch}} == 'x86_64'
+    runs: |
+      echo "Building for x86_64"
+```
+
+---
+
+## `subpackages`
+
+The optional `subpackages` section lists additional APK outputs produced by the same build. Each subpackage has its own `name`, `description`, `pipeline`, and `dependencies`. Subpackages can also carry `if:` conditionals:
+
+```yaml
+subpackages:
+  - name: "curl-dev"
+    description: "headers for libcurl"
+    pipeline:
+      - uses: split/dev
+    dependencies:
+      runtime:
+        - libcurl4
+
+  - name: "curl-doc"
+    description: "documentation for curl"
+    pipeline:
+      - uses: split/manpages
+```
+
+---
+
+## `vars`
+
+The `vars` section defines a map of arbitrary string variables that can be referenced anywhere in the build file using `${{vars.<name>}}` substitution syntax.
+
+```yaml
+vars:
+  with-openssl: --with-openssl
+  with-rustls: --without-rustls
+
+pipeline:
+  - uses: autoconf/configure
+    with:
+      opts: |
+        ${{vars.with-openssl}} \
+        ${{vars.with-rustls}}
+```
+
+---
+
+## `var-transforms`
+
+The `var-transforms` section applies regular-expression transformations to existing variables, creating new derived variables. This is particularly useful for normalising upstream version strings that are incompatible with APK's version format. See [Variable Transformations](/configuration/var-transforms) for full details.
+
+```yaml
+var-transforms:
+  - from: ${{package.version}}
+    match: \\.(\d+)$
+    replace: +$1
+    to: mangled-package-version
+```
+
+---
+
+## `data`
+
+The `data` section provides named lists of key-value pairs that can be iterated over using `range:` in `subpackages` or `pipeline` steps to generate multiple outputs from a single template.
+
+```yaml
+data:
+  - name: components
+    items:
+      foo: "foo-description"
+      bar: "bar-description"
+```
+
+---
+
+## `update`
+
+The `update` section declares how automated tooling can discover and apply new upstream versions. Supported monitors include `github:`, `release-monitor:`, `git:`, and `oci:`.
+
+```yaml
+update:
+  enabled: true
+  github:
+    identifier: sigstore/cosign
+    strip-prefix: v
+```
+
+---
+
+## `options`
+
+Named build option blocks that override `vars` or environment packages when activated via `--build-option` at the command line. See [Build Options](/configuration/build-options) for full details.
+
+```yaml
+options:
+  rustls:
+    vars:
+      with-openssl: --without-openssl
+      with-rustls: --with-rustls
+    environment:
+      contents:
+        packages:
+          add:
+            - rustls-ffi
+          remove:
+            - openssl-dev
+```
+
+---
+
+## Complete example: gnu-hello.yaml
+
+The following is the complete, working `gnu-hello.yaml` example from the melange repository. It demonstrates the three required sections (`package`, `environment`, `pipeline`) together with copyright metadata and the `fetch`, `autoconf/*`, and `strip` built-in pipeline steps.
+
+```yaml
+package:
+  name: hello
+  version: 2.12
+  epoch: 0
+  description: "the GNU hello world program"
+  copyright:
+    - attestation: |
+        Copyright 1992, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2005,
+        2006, 2007, 2008, 2010, 2011, 2013, 2014, 2022 Free Software Foundation,
+        Inc.
+      license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - build-base
+      - busybox
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+
+  - uses: autoconf/configure
+
+  - uses: autoconf/make
+
+  - uses: autoconf/make-install
+
+  - uses: strip
+```
+
+Build this package with:
+
+```shell
+melange build gnu-hello.yaml
+```
+
+The output appears under a `packages/` directory organised by architecture.

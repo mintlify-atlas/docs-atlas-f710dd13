@@ -1,47 +1,209 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with melange: Build your first APK"
+sidebarTitle: "Quickstart"
+description: "Build the GNU Hello APK package from scratch using melange — covering keygen, the build pipeline, signing, and inspecting the output packages directory."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through building a real APK package with melange from start to finish. You will generate a signing key, write a build configuration, run the build, and inspect the resulting package files. The example used throughout is GNU Hello — a small, well-known C program that is ideal for demonstrating a complete autoconf-based build pipeline.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+### Install melange
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+Before building anything, you need melange on your machine. The quickest paths are Homebrew (macOS and Linux) and the official container image. See the full [Installation guide](/installation) for all options including `go install` and building from source.
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
-</Steps>
+<CodeGroup>
+
+```shell Homebrew
+brew install melange
+```
+
+```shell Docker
+# Verify the image is accessible
+docker run --rm cgr.dev/chainguard/melange version
+```
+
+</CodeGroup>
+
+Confirm your installation:
+
+```shell
+melange version
+```
+
+### Generate a signing key
+
+Every APK must be signed before it can be installed by an APK client. melange ships a `keygen` subcommand that generates an RSA key pair sized at 4096 bits by default.
+
+```shell
+melange keygen
+```
+
+The output should look like this:
+
+```
+ generating keypair with a 4096 bit prime, please wait...
+ wrote private key to melange.rsa
+ wrote public key to melange.rsa.pub
+```
+
+This creates two files in your working directory:
+
+| File | Purpose |
+|---|---|
+| `melange.rsa` | Private key — used with `--signing-key` at build time. Keep this secret. |
+| `melange.rsa.pub` | Public key — distributed alongside your package repository so clients can verify signatures. |
+
+<Warning>
+  Do not commit `melange.rsa` to version control. Add it to your `.gitignore` before proceeding.
+</Warning>
+
+You can choose a custom key name by passing it as an argument:
+
+```shell
+melange keygen my-packages.rsa
+```
+
+### Write the build configuration
+
+Create a file called `hello.yaml` in your working directory with the following content. This is the canonical GNU Hello example from the melange repository — it fetches the upstream tarball, configures it with autoconf, compiles it, installs it, and strips the binary:
+
+```yaml hello.yaml
+package:
+  name: hello
+  version: 2.12
+  epoch: 0
+  description: "the GNU hello world program"
+  copyright:
+    - attestation: |
+        Copyright 1992, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2005,
+        2006, 2007, 2008, 2010, 2011, 2013, 2014, 2022 Free Software Foundation,
+        Inc.
+      license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - build-base
+      - busybox
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+
+  - uses: autoconf/configure
+
+  - uses: autoconf/make
+
+  - uses: autoconf/make-install
+
+  - uses: strip
+```
+
+Here is what each section does:
+
+- **`package`** — metadata: name, version, epoch (used to force upgrades of same-version packages), description, and SPDX license identifier.
+- **`environment.contents`** — APK packages and repository URLs assembled into the build guest. These packages are available during compilation but are not included in the final `.apk`.
+- **`pipeline`** — the ordered list of build steps. Each `uses` entry refers to a named built-in pipeline. `fetch` downloads and verifies the source tarball; `autoconf/configure`, `autoconf/make`, and `autoconf/make-install` run the standard GNU build system sequence; `strip` removes debug symbols to reduce package size.
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  The `${{package.version}}` syntax is a melange substitution variable. It is replaced at build time with the value from `package.version`. See the [substitutions reference](/configuration/substitutions) for the full list.
 </Tip>
+
+### Run the build
+
+With the configuration and signing key in place, run the build. Pass the `--arch` flag to build only for your current architecture — otherwise melange will attempt to build for all supported targets.
+
+<CodeGroup>
+
+```shell Native (melange installed locally)
+melange build hello.yaml \
+  --signing-key melange.rsa \
+  --arch $(uname -m)
+```
+
+```shell Docker
+docker run --privileged --rm \
+  -v "${PWD}":/work \
+  cgr.dev/chainguard/melange build hello.yaml \
+  --signing-key melange.rsa \
+  --arch $(uname -m)
+```
+
+</CodeGroup>
+
+<Note>
+  The `--privileged` flag is required when running inside Docker because melange uses [bubblewrap](https://github.com/containers/bubblewrap) to create the isolated build guest, which requires elevated capabilities. When running melange natively outside a container, Docker or Podman must still be available on the host.
+</Note>
+
+You will see melange bootstrap the build environment, fetch the source tarball, run each pipeline step, and emit the final package. A successful run ends with output similar to:
+
+```
+INFO -- packages/x86_64/hello-2.12-r0.apk
+INFO -- packages/x86_64/APKINDEX.tar.gz
+```
+
+### Inspect the output
+
+melange writes all output to the `packages/` directory (configurable via `--out-dir`), organized by architecture:
+
+```
+packages/
+└── x86_64/
+    ├── hello-2.12-r0.apk
+    └── APKINDEX.tar.gz
+```
+
+- **`hello-2.12-r0.apk`** — the signed APK package file. The filename encodes the package name, version, and epoch (`r0`).
+- **`APKINDEX.tar.gz`** — the signed repository index. APK clients use this file to resolve packages from the repository.
+
+To list the contents of the built package, use the `tar` command (APKs are gzipped tar archives):
+
+```shell
+tar -tzvf packages/x86_64/hello-2.12-r0.apk
+```
+
+To build for all default architectures (omit `--arch`), melange will produce a subdirectory for each target:
+
+```
+packages/
+├── aarch64/
+│   ├── hello-2.12-r0.apk
+│   └── APKINDEX.tar.gz
+└── x86_64/
+    ├── hello-2.12-r0.apk
+    └── APKINDEX.tar.gz
+```
+
+<Tip>
+  To use your locally built package in an apko image, point apko's repository list at the `packages/` directory and add the `melange.rsa.pub` public key to the apko keyring configuration.
+</Tip>
+
+</Steps>
+
+## Next steps
+
+You have built and signed your first APK with melange. From here you can:
+
+<CardGroup cols={2}>
+  <Card title="Build file reference" icon="file-code" href="/configuration/build-file">
+    Explore every field available in a melange YAML configuration, including subpackages, test pipelines, and build options.
+  </Card>
+  <Card title="Built-in pipelines" icon="list-tree" href="/pipelines/built-in">
+    Browse the full library of reusable pipeline steps for autoconf, CMake, Go, Cargo, Python, and more.
+  </Card>
+  <Card title="Command reference" icon="terminal" href="/commands/overview">
+    See all flags and options for `melange build`, `melange keygen`, `melange lint`, `melange test`, and other subcommands.
+  </Card>
+  <Card title="Multi-arch builds" icon="microchip" href="/guides/multi-arch">
+    Learn how melange uses QEMU to build for foreign architectures without cross-compilation.
+  </Card>
+</CardGroup>

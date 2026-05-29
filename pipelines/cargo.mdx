@@ -1,0 +1,152 @@
+---
+title: "Building Rust Packages with melange's cargo/build Pipeline"
+sidebarTitle: "Cargo Pipeline"
+description: "Compile Rust projects into APK packages using melange's cargo/build pipeline, which produces auditable binaries with embedded dependency metadata."
+---
+
+Melange includes a built-in `cargo/build` pipeline that compiles Rust packages using `cargo auditable build`. Unlike a plain `cargo build`, the auditable variant embeds a compressed JSON dependency tree directly into the binary's own linker section. This means every produced binary carries a machine-readable record of every crate it was compiled from, enabling vulnerability scanners to identify affected packages without access to the original build environment.
+
+## How `cargo/build` works
+
+Under the hood the pipeline:
+
+1. Changes into the directory specified by `modroot` (default: the workspace root).
+2. Runs `cargo auditable build --target-dir target <opts> [--jobs N]` with any extra `rustflags` set via `RUSTFLAGS`.
+3. Copies the built binary from the output directory (`target/release` by default) to the APK staging directory at `${{targets.contextdir}}/<prefix>/<install-dir>/`.
+
+The pipeline requires `cargo-auditable` and `rust` to be available in the build environment. Declare them in your `environment.contents.packages` list.
+
+## Inputs
+
+| Input | Default | Required | Description |
+|---|---|---|---|
+| `output` | — | — | Output binary filename. When set, only this binary is installed. When unset, all files in `output-dir` are installed. |
+| `opts` | `--release` | — | Options passed directly to `cargo auditable build` |
+| `modroot` | `.` | — | Top-level directory of the Rust package (where `Cargo.toml` lives). The pipeline `cd`s here before building. |
+| `rustflags` | `""` | — | Flags passed to every compiler invocation via `RUSTFLAGS`. Whitespace-separated. |
+| `prefix` | `usr` | — | Installation prefix inside the APK |
+| `install-dir` | `bin` | — | Directory under `prefix` where binaries are installed |
+| `output-dir` | `target/release` | — | Directory where built binaries are found after compilation |
+| `jobs` | *(CPU count)* | — | Override the number of parallel compilation jobs |
+
+<Note>
+  The `output` input is optional. When left empty, every file in `output-dir` is installed to `install-dir`. Specify `output` when you want to install only a single named binary.
+</Note>
+
+## Example: building `eza`
+
+The following example from `examples/cargo-build.yaml` builds `eza`, a modern replacement for `ls`, from a pinned git tag:
+
+```yaml
+package:
+  name: eza
+  version: 0.20.24
+  epoch: 1
+  description: "A modern, maintained replacement for ls"
+  copyright:
+    - license: MIT
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - libgit2-dev
+      - zlib-dev
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/eza-community/eza
+      tag: v${{package.version}}
+      expected-commit: 3ad8132f874f66945eca3511491afa85c5f43ebe
+
+  - uses: cargo/build
+    with:
+      output: ${{package.name}}
+      jobs: 2
+
+  - uses: strip
+
+update:
+  enabled: true
+  github:
+    identifier: eza-community/eza
+    strip-prefix: v
+    tag-filter-prefix: v
+
+test:
+  pipeline:
+    - runs: |
+        eza
+        eza --version
+```
+
+This three-step pipeline checks out the source at the pinned commit, compiles it with two parallel jobs, and then strips debug symbols from the resulting binary.
+
+## Auditable build metadata
+
+The `cargo auditable build` command embeds a JSON dependency tree in the `.cargo_audit` linker section of each produced ELF binary. The embedded data follows the [cargo-auditable format](https://github.com/rust-secure-code/cargo-auditable) and includes:
+
+- The name and version of every crate linked into the binary
+- Whether each crate came from `crates.io`, a git source, or a local path
+
+Vulnerability scanners such as `cargo audit` and Grype can read this metadata directly from the binary, enabling software composition analysis (SCA) without a separate SBOM file.
+
+<Tip>
+  Always pair `cargo/build` with a `strip` step to reduce binary size. Strip removes DWARF debug symbols while leaving the `.cargo_audit` section intact, so auditability is preserved.
+</Tip>
+
+## Parallel compilation jobs
+
+By default, Cargo uses all available CPU cores. Inside a build container the available core count may be lower than the host. Set `jobs:` explicitly to avoid resource contention on shared build infrastructure:
+
+```yaml
+- uses: cargo/build
+  with:
+    output: mybin
+    jobs: 4
+```
+
+## Passing extra compiler flags
+
+Use `rustflags:` to inject flags that apply to every compiler invocation Cargo performs. This is equivalent to setting the `RUSTFLAGS` environment variable:
+
+```yaml
+- uses: cargo/build
+  with:
+    output: mybin
+    rustflags: "-C target-feature=+crt-static"
+```
+
+## Building from a subdirectory
+
+For Cargo workspaces or multi-crate repositories where the target package lives in a subdirectory, set `modroot:`:
+
+```yaml
+- uses: cargo/build
+  with:
+    modroot: crates/mybin
+    output: mybin
+```
+
+## Selecting a build profile
+
+The `opts:` input is forwarded verbatim to `cargo auditable build`. To build with a custom profile instead of `--release`, override this input:
+
+```yaml
+- uses: cargo/build
+  with:
+    output: mybin
+    opts: --profile dist
+    output-dir: target/dist
+```
+
+<Warning>
+  When you change the Cargo profile via `opts:`, the output directory also changes. Update `output-dir` accordingly to point to where Cargo places the compiled binary for that profile.
+</Warning>

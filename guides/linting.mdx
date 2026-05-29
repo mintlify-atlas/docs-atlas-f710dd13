@@ -1,0 +1,129 @@
+---
+title: "Post-Build Linting: Catching Package Errors Early"
+sidebarTitle: "Linting"
+description: "Learn how melange's built-in linters catch common packaging mistakes after every build, and how to handle non-standard paths using the -compat convention."
+---
+
+After melange finishes building a package it runs a set of automated lint checks on the produced APK files. These checks catch structural mistakes — wrong install paths, world-writable files, unstripped binaries, temporary files accidentally included in the package — before the package ever reaches a repository. Catching these problems early is far cheaper than debugging them after deployment.
+
+## Available linters
+
+melange ships with the following linters, each targeted at a specific class of problem:
+
+<Accordion title="dev — Unexpected files under /dev">
+  If a package is creating device nodes under `/dev`, it should use `udev` rules instead. Any files found under `/dev` that were not placed there by `udev` will trigger this linter. Resolution: remove the offending files from the package, or switch to a `udev`-based approach.
+</Accordion>
+
+<Accordion title="opt — Files installed into /opt">
+  Files placed under `/opt` indicate the package should follow the `-compat` convention (see below) rather than installing directly to `/opt`.
+</Accordion>
+
+<Accordion title="setuidgid — setuid or setgid bits are set">
+  The `setuid` and `setgid` permission bits grant a binary elevated privileges when executed. These are rarely appropriate in modern container-oriented packaging. Resolution: remove the bits in your pipeline, or explicitly disable this linter with a justification if the package genuinely requires them.
+</Accordion>
+
+<Accordion title="srv — Files installed into /srv">
+  Files placed under `/srv` indicate the package should use the `-compat` convention instead.
+</Accordion>
+
+<Accordion title="strip — Binary not stripped">
+  Debug symbols left in a binary inflate package size unnecessarily. Ensure your pipeline includes a `strip` step (the `strip` built-in pipeline step handles this automatically).
+</Accordion>
+
+<Accordion title="tempdir — Files left in temporary directories">
+  Any files found under `/tmp`, `/var/tmp`, or similar temporary directories indicate that the build pipeline failed to clean up after itself. Remove the offending files in the pipeline before the package is emitted.
+</Accordion>
+
+<Accordion title="usrlocal — Files installed into /usr/local">
+  Packages should install into `/usr/bin`, `/usr/lib`, etc. rather than `/usr/local`. If upstream software hard-codes `/usr/local`, create a `-compat` subpackage to provide symlinks.
+</Accordion>
+
+<Accordion title="varempty — Files left in /var/empty">
+  `/var/empty` is reserved and must remain empty. Remove any files your pipeline places there.
+</Accordion>
+
+<Accordion title="worldwrite — World-writable files or directories">
+  World-writable permissions are a security risk. Change the permissions of any offending files in the pipeline, disable the linter with justification, or use the `-compat` convention if applicable.
+</Accordion>
+
+## Default linter configuration
+
+melange separates linters into two categories: those that **must pass** (build fails on violation) and those that only **warn** (build succeeds but the warning is logged).
+
+The default `--lint-require` linters are:
+
+```
+dev, infodir, libtool/la-files, setuidgid, tempdir, usrmerge, varempty, worldwrite
+```
+
+The default `--lint-warn` linters are:
+
+```
+binaryarch, cudaruntimelib, dll, duplicate, dylib, lddcheck, maninfo, nonlinux,
+object, opt, pkgconf, python/docs, python/multiple, python/test, sbom, srv,
+staticarchive, strip, unsupportedarch, usrlocal
+```
+
+<Note>
+  These defaults may change as new linters are added. Pass `--lint-require` and `--lint-warn` explicitly to `melange build` if you need stable, reproducible lint behaviour across melange versions.
+</Note>
+
+## The `-compat` package convention
+
+In nearly every case, binaries belong in `/usr/bin/`, libraries in `/usr/lib/`, configuration in `/etc/`, and so on. However, some upstream software (Helm charts, legacy scripts, Docker entrypoints) expects things at non-standard locations like `/usr/local/bin` or `/opt`.
+
+The melange convention for handling this is the **`-compat` subpackage**:
+
+1. Have the main package install files into the standard location (e.g., `/usr/bin/mytool`).
+2. Create a subpackage named `<package>-compat` that moves or symlinks those files to the location the upstream expects (e.g., `/usr/local/bin/mytool`).
+
+```yaml
+subpackages:
+  - name: mytool-compat
+    description: "Compatibility symlinks for mytool in /usr/local/bin"
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}/usr/local/bin"
+          ln -sf /usr/bin/mytool "${{targets.subpkgdir}}/usr/local/bin/mytool"
+```
+
+Users who need the non-standard path install `mytool-compat` in addition to (or instead of) `mytool`. This keeps the main package clean while fully supporting legacy consumers.
+
+## Disabling a linter
+
+Lints should only be disabled after confirming that the flag is genuinely inappropriate for the package. When you do disable a linter, always include a comment explaining why.
+
+Add a `checks.disabled` list under `package:`:
+
+```yaml
+package:
+  name: foobar
+  version: 1.0.0
+  epoch: 42
+  checks:
+    disabled:
+      - setuidgid  # Package is meant to have setuid binaries
+      - strip      # Toolchain problems require we keep debug info
+```
+
+<Warning>
+  A failing lint is a clear signal that something is wrong. When in doubt, assume the linter is correct and fix the underlying issue rather than disabling the check.
+</Warning>
+
+## Linting existing APK files
+
+melange also exposes a standalone `melange lint` command for linting APK files that already exist on disk, without re-running a full build:
+
+```shell
+melange lint ./packages/x86_64/foobar-1.0.0-r42.apk
+```
+
+This is useful for inspecting packages produced by an earlier build, or for checking packages retrieved from a remote repository.
+
+## Persisting lint results
+
+Pass `--persist-lint-results` to `melange build` to write lint findings to JSON files in `packages/{arch}/` alongside the APK files. This is useful for automated auditing in CI pipelines:
+
+```shell
+melange build melange.yaml --persist-lint-results
+```

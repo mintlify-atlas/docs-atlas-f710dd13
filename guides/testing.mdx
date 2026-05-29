@@ -1,0 +1,224 @@
+---
+title: "Testing APK Packages with melange's test Command"
+sidebarTitle: "Testing"
+description: "Define test pipelines inside your melange YAML, run them with melange test, and validate packages against local or remote repositories."
+---
+
+melange includes a first-class `test` command that lets you validate the packages you build using the same pipeline DSL you already know from `melange build`. Tests run in isolated guest environments, can use test fixture files, and integrate naturally with both local development and CI workflows.
+
+## The `test:` block
+
+Add a `test:` key at the top level of your melange YAML to define tests for the main package, or nest it inside a `subpackages:` entry to test a specific subpackage. A `test:` block follows exactly the same structure as the `pipeline:` section — it has an `environment:` for specifying required packages and a `pipeline:` of `runs:` and `uses:` steps.
+
+Here is the full gnu-hello example from the melange README extended with a test block:
+
+```yaml
+package:
+  name: hello
+  version: 2.12
+  epoch: 0
+  description: "the GNU hello world program"
+  copyright:
+    - attestation: |
+        Copyright 1992, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2005,
+        2006, 2007, 2008, 2010, 2011, 2013, 2014, 2022 Free Software Foundation,
+        Inc.
+      license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - build-base
+      - busybox
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+  - uses: autoconf/configure
+  - uses: autoconf/make
+  - uses: autoconf/make-install
+  - uses: strip
+
+subpackages:
+  - name: "hello-doc"
+    description: "Documentation for hello"
+    pipeline:
+      - uses: split/manpages
+    test:
+      pipeline:
+        - uses: test/docs
+
+test:
+  environment:
+    contents:
+      packages:
+        - bar
+  pipeline:
+    - runs: |
+        hello
+        hello --version
+```
+
+<Note>
+  Unlike the build guest, each test runs in a **fresh container** built by apko that contains only the Package Under Test (PUT) plus whatever you list in `test.environment.contents.packages`. The main `test:` block automatically includes the main package; a subpackage `test:` block automatically includes that subpackage.
+</Note>
+
+## Test environment details
+
+### Workspace
+
+Just like a build, all test pipeline steps share a single workspace directory that is mounted as the current working directory. You can place test fixture files (scripts, data files, config snippets) into a directory on your host and pass it via `--source-dir`. melange copies those files into the workspace before the tests run.
+
+For example, to test a Python data-processing package, create a fixture file:
+
+```python
+# /tmp/testfiles/pandas-test.py
+import numpy as np
+import pandas as pd
+
+s = pd.Series([1, 3, 5, np.nan, 6, 8])
+dates = pd.date_range("20130101", periods=6)
+df = pd.DataFrame(np.random.randn(6, 4), index=dates, columns=list("ABCD"))
+```
+
+Then reference it in your test pipeline and pass `--source-dir` so the file lands in the workspace as `./pandas-test.py`:
+
+```shell
+melange test ./py3-pandas-test.yaml py3-pandas --source-dir /tmp/testfiles
+```
+
+### Guest container
+
+The test guest is built fresh for each test context using apko. The package under test is always included automatically; additional packages come from `test.environment.contents.packages`. For example, a main-package test:
+
+```yaml
+package:
+  name: py3-pandas
+
+test:
+  environment:
+    contents:
+      packages:
+        - busybox
+        - python-3
+```
+
+produces a guest containing `py3-pandas`, `busybox`, `python-3`, and their transitive dependencies.
+
+A subpackage test works the same way, with the subpackage as the automatic PUT:
+
+```yaml
+subpackages:
+  - name: ${{package.name}}-dev
+    description: PHP 8.2 msgpack development headers
+    test:
+      environment:
+        contents:
+          packages:
+            - busybox
+            - wolfi-base
+      pipeline:
+        - runs: |
+            grep PHP_MSGPACK_VERSION /usr/include/php/ext/msgpack/php_msgpack.h
+```
+
+This guest contains `php-8.2-msgpack-dev`, `busybox`, `wolfi-base`, and their transitive dependencies.
+
+## Writing a standalone test file
+
+Tests can be embedded in the same YAML as the build, or placed in a separate file. A standalone test file requires a minimal set of placeholder fields to satisfy the parser:
+
+```yaml
+package:
+  name: php-8.2-msgpack
+  version: 2.2.0
+  epoch: 0
+  description: "Tests for PHP extension msgpack"
+  copyright:
+    - license: BSD-3-Clause
+
+# Required placeholder — leave empty
+pipeline:
+
+test:
+  environment:
+    contents:
+      packages:
+        - wolfi-base
+        - apk-tools
+  pipeline:
+    - runs: |
+        php --version
+        php -m | grep msgpack
+```
+
+## Using predefined pipelines in tests
+
+Test pipelines support `uses:` steps just like build pipelines. Point `--pipeline-dir` at a directory containing custom pipeline YAML files:
+
+```shell
+melange test ./mypackage-test.yaml --pipeline-dir ./pipelines
+```
+
+## Running tests
+
+### Basic invocation
+
+```shell
+melange test ./melange.yaml
+```
+
+The package name is taken from `package.name` in the YAML file.
+
+### Targeting a specific package
+
+Pass a second positional argument to test a different package with the same test file. This is useful for sharing a single test file across versioned packages (e.g., `php-8.1`, `php-8.2`, `php-8.3`):
+
+```shell
+# Use package.Name from the YAML
+melange test ./testfile.yaml
+
+# Override with a specific package name
+melange test ./testfile.yaml mypackage
+
+# Test a specific version
+melange test ./testfile.yaml mypackage=2.2.0-r2
+```
+
+### Key flags
+
+| Flag | Description |
+|------|-------------|
+| `--arch` | Architecture to test for (e.g., `aarch64`, `x86_64`). Default: host arch. |
+| `--runner` | Runner to use: `bubblewrap`, `docker`, or `qemu`. |
+| `--source-dir` | Directory containing test fixture files to copy into the workspace. |
+| `--pipeline-dir` | Directory with custom pipeline definitions. |
+| `--keyring-append` | Path or URL to additional signing keys for the APK resolver. |
+| `--repository-append` | Path or URL to additional APK repositories. |
+| `--test-package-append` | Extra packages added to every test environment. |
+
+### Combining local and remote packages
+
+Because melange uses the standard APK resolver (via apko), you can mix local and remote packages freely. This lets you test local changes against the current public release of other packages, or pin specific versions:
+
+```shell
+melange test ./py3-pandas-test.yaml py3-pandas \
+  --source-dir /tmp/testfiles \
+  --arch aarch64 \
+  --keyring-append /path/to/local-melange.rsa.pub \
+  --repository-append /path/to/local/packages \
+  --repository-append https://packages.wolfi.dev/os \
+  --keyring-append https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+```
+
+<Tip>
+  If you bump the epoch of a locally built package, the APK resolver will prefer it over the released version, making it easy to test your changes without publishing.
+</Tip>

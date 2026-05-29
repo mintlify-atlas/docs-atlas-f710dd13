@@ -1,0 +1,123 @@
+---
+title: "melange lint: Validate APK Package Contents"
+sidebarTitle: "lint"
+description: "Reference for melange lint — an experimental command that checks existing APK files against a configurable set of quality and correctness linters."
+---
+
+`melange lint` inspects an existing `.apk` file and runs a suite of quality and correctness checks against its contents. It is distinct from the post-build linting that `melange build` performs automatically — `melange lint` operates on any `.apk` file on disk, regardless of how it was produced. This makes it useful for validating packages in CI pipelines, auditing third-party APKs, or running targeted checks after a build without rebuilding.
+
+<Warning>
+`melange lint` is an **experimental command**. Its interface and available linters may change in future releases.
+</Warning>
+
+## Usage
+
+```shell
+melange lint [flags] <package.apk> [package2.apk ...]
+```
+
+One or more `.apk` files can be provided as positional arguments. Multiple files are linted concurrently.
+
+## Examples
+
+```shell
+# Lint a single APK
+melange lint packages/x86_64/crane-0.19.1-r0.apk
+
+# Lint all APKs in a directory
+melange lint packages/x86_64/*.apk
+
+# Persist results to JSON files
+melange lint --persist-lint-results --out-dir ./lint-results packages/x86_64/*.apk
+
+# Override the required linters
+melange lint --lint-require dev,tempdir,worldwrite packages/x86_64/mypackage-1.0.0-r0.apk
+```
+
+## Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lint-require` | see below | Linters that **must** pass; failure causes a non-zero exit code |
+| `--lint-warn` | see below | Linters that emit warnings but do not fail the command |
+| `--persist-lint-results` | `false` | Write lint results as JSON files in `packages/{arch}/` |
+| `--out-dir` | `packages` | Directory for JSON lint result files (requires `--persist-lint-results`) |
+
+### Inherited
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Available linters
+
+Linters are organized into two groups: **required** (build-breaking) and **warning** (advisory).
+
+### Required linters (default)
+
+These linters cause `melange lint` to exit with a non-zero status when they trigger:
+
+| Linter | What it checks |
+|--------|---------------|
+| `dev` | Files placed under `/dev` — packages should use udev instead |
+| `infodir` | Presence of `/usr/share/info/dir` — should be removed (use the `split/infodir` pipeline) |
+| `libtool/la-files` | `.la` libtool archive files that should not be distributed |
+| `setuidgid` | Files with the setuid or setgid bit set |
+| `tempdir` | Files placed in temporary directories like `/tmp` or `/run` |
+| `usrmerge` | Binaries in `/bin` or `/sbin` instead of `/usr/bin` or `/usr/sbin` |
+| `varempty` | Files in `/var/empty` that violate its invariant |
+| `worldwrite` | World-writable files or directories |
+
+### Warning linters (default)
+
+These linters emit warnings without failing the command:
+
+| Linter | What it checks |
+|--------|---------------|
+| `binaryarch` | Binaries compiled for unsupported CPU architectures |
+| `cudaruntimelib` | CUDA driver-specific libraries that should come from the host |
+| `dll` | Windows `.dll` files packaged in a Linux APK |
+| `duplicate` | Duplicate file entries in the package |
+| `dylib` | macOS `.dylib` files packaged in a Linux APK |
+| `lddcheck` | Shared libraries without a corresponding `ldd-check` test pipeline |
+| `maninfo` | Documentation files that belong in a separate package |
+| `nonlinux` | References to non-Linux filesystem paths |
+| `object` | Intermediate `.o` object files left in the package |
+| `opt` | Files installed under `/opt` (should be a `-compat` package) |
+| `pkgconf` | `.pc` files without a corresponding `pkgconf` test pipeline |
+| `python/docs` | Python documentation directories that should be removed |
+| `python/multiple` | Multiple Python top-level packages in a single APK |
+| `python/test` | Python test directories left in the package |
+| `sbom` | SBOM files placed under `/var/lib/db/sbom` |
+| `srv` | Files under `/srv` (should be a `-compat` package) |
+| `staticarchive` | Static `.a` archive files |
+| `strip` | Unstripped binaries |
+| `unsupportedarch` | References to architectures other than `aarch64`/`x86_64` |
+| `usrlocal` | Files under `/usr/local` (should be a `-compat` package) |
+
+## Customizing linters
+
+Use `--lint-require` and `--lint-warn` to override which checks are enforced. Linters not in either list are silently ignored:
+
+```shell
+# Only enforce the worldwrite and setuidgid checks
+melange lint \
+  --lint-require worldwrite,setuidgid \
+  --lint-warn strip,object \
+  packages/x86_64/mypackage-1.0.0-r0.apk
+```
+
+<Tip>
+The same `--lint-require` and `--lint-warn` flags are available on `melange build`, so you can replicate the exact same linter configuration during builds and standalone lint runs.
+</Tip>
+
+## JSON result files
+
+When `--persist-lint-results` is set, melange writes a `.lint.json` file for each APK alongside the package file. This is useful for consuming lint results in downstream CI systems without parsing log output.
+
+```shell
+melange lint \
+  --persist-lint-results \
+  --out-dir ./results \
+  packages/x86_64/*.apk
+```

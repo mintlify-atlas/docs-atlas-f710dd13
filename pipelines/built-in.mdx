@@ -1,0 +1,279 @@
+---
+title: "Built-in melange Pipelines: Fetch, Strip, Patch & More"
+sidebarTitle: "Built-in Pipelines"
+description: "Explore melange's built-in pipeline library: fetch, strip, patch, git-checkout, and ecosystem pipelines for Go, Rust, Python, and more."
+---
+
+Melange ships an extensive library of reusable pipelines that cover the most common packaging tasks — downloading sources, applying patches, stripping debug symbols, and running ecosystem-specific build tools. These pipelines live in the `pkg/build/pipelines/` directory of the melange repository and are available to every build without any additional configuration.
+
+## How built-in pipelines are located
+
+A pipeline is invoked by its path relative to the `pkg/build/pipelines/` directory, without the `.yaml` extension. For a pipeline stored at `pkg/build/pipelines/go/build.yaml` you write:
+
+```yaml
+pipeline:
+  - uses: go/build
+    with:
+      packages: .
+      output: mybinary
+```
+
+For a top-level pipeline like `pkg/build/pipelines/fetch.yaml` you simply write:
+
+```yaml
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://example.com/source-1.0.tar.gz
+      expected-sha256: <hash>
+```
+
+<Note>
+  To list every available pipeline, browse the `pkg/build/pipelines/` tree in the melange repository or run `find $(go env GOPATH)/pkg/mod/chainguard.dev/melange*/pkg/build/pipelines -name '*.yaml'` after installing melange locally.
+</Note>
+
+## Pipeline categories
+
+| Category | Path prefix | Purpose |
+|---|---|---|
+| General | *(top-level)* | Fetch, patch, strip, git operations |
+| autoconf | `autoconf/` | GNU Autotools configure / make builds |
+| cargo | `cargo/` | Rust / Cargo builds |
+| cmake | `cmake/` | CMake configure and build |
+| go | `go/` | Go compiler builds and dependency bumps |
+| llvm | `llvm/` | LLVM-based toolchain builds |
+| maven | `maven/` | Java / Maven builds |
+| meson | `meson/` | Meson build system |
+| npm | `npm/` | Node.js / npm installs |
+| pecl | `pecl/` | PHP PECL extension builds |
+| perl | `perl/` | Perl module builds |
+| python | `python/` | Python package builds |
+| R | `R/` | R package builds (CRAN) |
+| ruby | `ruby/` | RubyGems builds |
+| split | `split/` | Package splitting helpers (bin, lib, dev, …) |
+
+## Commonly used pipelines
+
+### `fetch`
+
+Downloads a source archive from a URI, verifies its checksum, and extracts it into the workspace. This is the most common way to get upstream source tarballs.
+
+**Required packages:** `wget`
+
+| Input | Default | Description |
+|---|---|---|
+| `uri` | *(required)* | URI to download |
+| `expected-sha256` | — | Expected SHA-256 checksum |
+| `expected-sha512` | — | Expected SHA-512 checksum |
+| `expected-none` | — | Set to skip checksum verification |
+| `strip-components` | `1` | Tar `--strip-components` value |
+| `directory` | `.` | Target extraction directory |
+| `extract` | `true` | Whether to untar the download |
+| `delete` | `false` | Delete the archive after extraction |
+| `timeout` | `5` | Connect/read timeout in seconds |
+| `dns-timeout` | `20` | DNS lookup timeout in seconds |
+| `retry-limit` | `5` | Number of download retries |
+| `purl-name` | `${{package.name}}` | PURL name for SBOM generation |
+| `purl-version` | `${{package.version}}` | PURL version for SBOM generation |
+
+<Warning>
+  Either `expected-sha256`, `expected-sha512`, or `expected-none` must be set. Builds fail if none of these are provided, ensuring supply-chain integrity.
+</Warning>
+
+**Example:**
+
+```yaml
+- uses: fetch
+  with:
+    uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+    expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+```
+
+---
+
+### `patch`
+
+Applies one or more patch files to the workspace sources using the `patch` command. Patch files must be placed in the source directory alongside your melange YAML.
+
+**Required packages:** `patch`
+
+| Input | Default | Description |
+|---|---|---|
+| `patches` | — | Whitespace-delimited list of patch files |
+| `series` | — | Path to a quilt-style series file |
+| `strip-components` | `1` | Strip components passed to `patch -p` |
+| `fuzz` | `2` | Maximum fuzz factor for context diffs |
+
+<Note>
+  Either `patches` or `series` must be provided. They are mutually exclusive — if both are set, `series` takes precedence.
+</Note>
+
+**Example:**
+
+```yaml
+- uses: patch
+  with:
+    patches: fix-build-on-musl.patch disable-tests.patch
+```
+
+---
+
+### `strip`
+
+Strips debug symbols from all ELF binaries and shared libraries in the package staging directory. This reduces APK size significantly for compiled packages.
+
+**Required packages:** `binutils`, `scanelf`
+
+| Input | Default | Description |
+|---|---|---|
+| `opts` | `-g` | Flags passed to the `strip` command |
+
+The pipeline uses `scanelf` to enumerate all `ET_DYN` and `ET_EXEC` ELF files under `${{targets.contextdir}}` and strips only native-architecture binaries (x86_64 or aarch64).
+
+**Example:**
+
+```yaml
+- uses: strip
+```
+
+---
+
+### `git-checkout`
+
+Clones a git repository into the workspace. Supports shallow clones, branch or tag pinning, commit verification, cherry-picks, submodules, and sparse checkout. See the [Git Pipelines](/pipelines/git) page for full documentation.
+
+**Required packages:** `git`
+
+**Example:**
+
+```yaml
+- uses: git-checkout
+  with:
+    repository: https://github.com/puerco/hello.git
+    tag: v${{package.version}}
+    expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+```
+
+---
+
+### `git-am`
+
+Applies one or more patch files to a git repository using `git am`. This is an alternative to the `patch` pipeline for repositories checked out with `git-checkout`.
+
+**Required packages:** `git`
+
+| Input | Default | Description |
+|---|---|---|
+| `patches` | *(required)* | Whitespace-delimited list of patch files |
+
+Patch paths are resolved relative to the workspace root — the same directory where melange copies files from `--source-dir`. This assumes `git-checkout` used the default destination (`.`), so the workspace root is the git repository.
+
+**Example:**
+
+```yaml
+- uses: git-am
+  with:
+    patches: 0001-fix-cve.patch 0002-backport.patch
+```
+
+---
+
+## Ecosystem pipeline quick reference
+
+<AccordionGroup>
+  <Accordion title="autoconf/ — GNU Autotools">
+    The `autoconf/` pipelines wrap the standard `./configure && make && make install` workflow:
+
+    - `autoconf/configure` — runs `./configure` with common flags
+    - `autoconf/make` — runs `make`
+    - `autoconf/make-install` — runs `make install` into `${{targets.destdir}}`
+
+    ```yaml
+    - uses: autoconf/configure
+    - uses: autoconf/make
+    - uses: autoconf/make-install
+    ```
+  </Accordion>
+
+  <Accordion title="cmake/ — CMake">
+    The `cmake/` pipelines configure and build CMake-based projects:
+
+    - `cmake/configure` — runs `cmake` with standard flags
+    - `cmake/build` — runs `cmake --build`
+    - `cmake/install` — installs to staging directory
+
+    ```yaml
+    - uses: cmake/configure
+    - uses: cmake/build
+    - uses: cmake/install
+    ```
+  </Accordion>
+
+  <Accordion title="meson/ — Meson">
+    The `meson/` pipelines wrap Meson and Ninja:
+
+    - `meson/configure` — runs `meson setup`
+    - `meson/compile` — runs `ninja`
+    - `meson/install` — runs `ninja install`
+
+    ```yaml
+    - uses: meson/configure
+    - uses: meson/compile
+    - uses: meson/install
+    ```
+  </Accordion>
+
+  <Accordion title="split/ — Package splitting">
+    The `split/` pipelines extract subsets of installed files into sub-packages:
+
+    - `split/bin` — moves `usr/bin` contents to a sub-package
+    - `split/dev` — moves headers and static libraries
+    - `split/lib` — moves shared libraries
+    - `split/manpages` — moves man pages
+    - `split/debug` — moves debug symbols
+    - `split/static` — moves `.a` static libraries
+    - `split/locales` — moves locale data
+
+    ```yaml
+    subpackages:
+      - name: hello-dev
+        pipeline:
+          - uses: split/dev
+    ```
+  </Accordion>
+
+  <Accordion title="python/ — Python packages">
+    The `python/` pipelines handle Python builds and installs, typically using setuptools or pip.
+
+    ```yaml
+    - uses: python/build-installer
+    ```
+  </Accordion>
+
+  <Accordion title="perl/ — Perl modules">
+    The `perl/` pipelines handle `Makefile.PL` and `Build.PL` based Perl module builds.
+
+    ```yaml
+    - uses: perl/makefile
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Adding new built-in pipelines
+
+New built-in pipelines are created by adding YAML files to the `pkg/build/pipelines/` directory and rebuilding melange. To test locally before submitting a pull request, install a development version with:
+
+```shell
+go install .
+```
+
+For CI pipeline builds, bump the melange dependency in `wolfictl`:
+
+```shell
+go get chainguard.dev/melange@main
+go mod tidy
+```
+
+<Tip>
+  For pipelines that don't belong in the upstream repository, use the `--pipeline-dir` flag to load them from a local directory. See [Custom Pipelines](/pipelines/custom) for details.
+</Tip>

@@ -1,0 +1,107 @@
+---
+title: "melange sign and sign-index: Signing APK Packages"
+sidebarTitle: "sign"
+description: "Reference for melange sign (individual APK files) and melange sign-index (APKINDEX.tar.gz) — how to sign packages and repository indexes with RSA keys."
+---
+
+melange provides two signing commands that cover different levels of the APK trust chain. `melange sign` embeds an RSA signature into individual `.apk` files, replacing each package on disk with a signed version. `melange sign-index` signs the `APKINDEX.tar.gz` repository index, which is what package managers verify when fetching metadata. Both commands require an RSA private key generated with `melange keygen`.
+
+In most workflows, `melange build --signing-key` handles signing automatically during the build. The standalone `sign` and `sign-index` commands are useful when packages are built without a signing key and need to be signed afterwards, or when re-signing existing artifacts.
+
+## Signing workflow
+
+```shell
+# Step 1: Generate keys (one-time)
+melange keygen local-melange.rsa
+
+# Step 2: Build (signing happens automatically if --signing-key is passed)
+melange build package.yaml --signing-key local-melange.rsa
+
+# Step 3: If built without a key, sign separately
+melange sign --signing-key local-melange.rsa packages/x86_64/*.apk
+
+# Step 4: Create (or update) the repository index
+melange index -o packages/x86_64/APKINDEX.tar.gz packages/x86_64/*.apk
+
+# Step 5: Sign the index
+melange sign-index --signing-key local-melange.rsa packages/x86_64/APKINDEX.tar.gz
+```
+
+---
+
+## melange sign
+
+`melange sign` signs one or more `.apk` files in-place. The original package file is replaced with an APK that contains the embedded signature. Multiple files are processed concurrently.
+
+### Usage
+
+```shell
+melange sign [--signing-key=key.rsa] <package.apk> [package2.apk ...]
+```
+
+### Examples
+
+```shell
+# Sign a single package
+melange sign --signing-key local-melange.rsa packages/x86_64/crane-0.19.1-r0.apk
+
+# Sign all APKs in a directory using a glob
+melange sign --signing-key local-melange.rsa packages/x86_64/*.apk
+```
+
+### Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--signing-key` | `-k` | `local-melange.rsa` | Path to the RSA private key file |
+
+---
+
+## melange sign-index
+
+`melange sign-index` signs an `APKINDEX.tar.gz` repository index file. By default it re-signs an already-signed index (updating the existing signature). Use `--force` to strip the old signature and create a fresh one.
+
+### Usage
+
+```shell
+melange sign-index [--signing-key=key.rsa] [--force] <APKINDEX.tar.gz>
+```
+
+### Examples
+
+```shell
+# Re-sign an existing index with the same key
+melange sign-index --signing-key local-melange.rsa packages/x86_64/APKINDEX.tar.gz
+
+# Replace the existing signature with a new one (--force)
+melange sign-index --signing-key local-melange.rsa --force packages/x86_64/APKINDEX.tar.gz
+```
+
+### Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--signing-key` | — | `melange.rsa` | Path to the RSA private key file |
+| `--force` | `-f` | `false` | Overwrite the index with a freshly signed copy, discarding the existing signature |
+
+<Note>
+The default key name differs between the two commands: `melange sign` defaults to `local-melange.rsa` while `melange sign-index` defaults to `melange.rsa`. Always specify `--signing-key` explicitly to avoid surprises.
+</Note>
+
+---
+
+## Inherited flags
+
+Both commands inherit the global flag:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Signature verification
+
+Once packages are signed, consumers can verify them by placing the `.rsa.pub` public key file in `/etc/apk/keys/` on their Alpine or Wolfi system. The `apk` package manager will then automatically verify package and index signatures against the trusted keys.
+
+<Tip>
+When iterating locally you can pass `--allow-untrusted` to `apk add` to bypass signature checking. Never do this in production images.
+</Tip>

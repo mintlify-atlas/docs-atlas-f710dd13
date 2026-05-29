@@ -1,72 +1,95 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "melange",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0c5c7c",
+    "light": "#cddce3",
+    "dark": "#0c5c7c"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/a4f0251c-8723-4289-99ee-27bcc2f4b73d.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/cfed9af2-a86d-481d-8e42-896cb0e1c782.png",
+    "dark": "https://media.brand.dev/cfed9af2-a86d-481d-8e42-896cb0e1c782.png"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/chainguard-dev/melange"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/chainguard-dev/melange"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Build Configuration",
+            "pages": [
+              "configuration/build-file",
+              "configuration/environment",
+              "configuration/substitutions",
+              "configuration/var-transforms",
+              "configuration/build-options"
+            ]
+          },
+          {
+            "group": "Pipelines",
+            "pages": [
+              "pipelines/overview",
+              "pipelines/built-in",
+              "pipelines/go",
+              "pipelines/cargo",
+              "pipelines/git",
+              "pipelines/custom"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/build-process",
+              "guides/build-cache",
+              "guides/testing",
+              "guides/linting",
+              "guides/signing",
+              "guides/multi-arch"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Command Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "commands/overview",
+              "commands/build",
+              "commands/test",
+              "commands/lint",
+              "commands/keygen",
+              "commands/sign",
+              "commands/index",
+              "commands/bump",
+              "commands/query",
+              "commands/convert"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

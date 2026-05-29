@@ -1,0 +1,187 @@
+---
+title: "Installing melange on Linux, macOS, and Docker"
+sidebarTitle: "Installation"
+description: "Install melange via Homebrew, go install, the cgr.dev container image, or by building from source — with shell completion setup included."
+---
+
+melange runs on Linux and macOS and can be installed in several ways depending on your workflow. For most users, Homebrew is the simplest option. If you prefer not to install a binary locally, the official container image lets you run melange through Docker or Podman without any installation at all.
+
+## Requirements
+
+Regardless of how you install melange, you will need one of the following container runtimes available on your host to execute build pipelines:
+
+- [Docker](https://docs.docker.com/get-docker/) (recommended)
+- [Podman](https://podman.io/getting-started/installation)
+
+melange uses [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) to isolate builds when running natively, and requires elevated privileges (`--privileged`) when running inside a Docker container.
+
+---
+
+## Installation methods
+
+### Homebrew (macOS and Linux)
+
+Homebrew is the recommended installation method for macOS and is also supported on Linux.
+
+```shell
+brew install melange
+```
+
+Homebrew handles updates through `brew upgrade melange`.
+
+---
+
+### `go install` (any platform with Go 1.21+)
+
+If you have Go installed, you can build and install the latest melange release directly from source using `go install`:
+
+```shell
+go install chainguard.dev/melange@latest
+```
+
+The binary is placed in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
+
+---
+
+### Container image (Docker / Podman)
+
+The official melange container image is published to `cgr.dev/chainguard/melange` and is rebuilt and signed on every release. This method requires no local installation — you run melange as a Docker command.
+
+Verify the image is accessible:
+
+```shell
+docker run --rm cgr.dev/chainguard/melange version
+```
+
+#### Running builds with Docker
+
+To build an APK with the container image, mount your working directory into the container at `/work` and pass `--privileged` so bubblewrap can set up the isolated build guest:
+
+```shell
+docker run --privileged --rm \
+  -v "${PWD}":/work \
+  cgr.dev/chainguard/melange build examples/gnu-hello.yaml
+```
+
+If your build configuration references a signing key in the current directory, the volume mount makes it available at the same relative path inside the container:
+
+```shell
+docker run --privileged --rm \
+  -v "${PWD}":/work \
+  cgr.dev/chainguard/melange build hello.yaml \
+  --signing-key melange.rsa \
+  --arch $(uname -m)
+```
+
+<Warning>
+  The `--privileged` flag grants the container extended Linux capabilities required by bubblewrap. Only run trusted build configurations with this flag.
+</Warning>
+
+<Tip>
+  You can pin to a specific melange version by using a tagged image, for example `cgr.dev/chainguard/melange:latest` or a digest-pinned reference. Check [cgr.dev](https://edu.chainguard.dev/chainguard/chainguard-images/reference/melange/) for available tags.
+</Tip>
+
+---
+
+### Build from source
+
+To build melange from its Git repository, clone the repo and run `go build`:
+
+```shell
+git clone https://github.com/chainguard-dev/melange.git
+cd melange
+go build -o melange .
+```
+
+Move the resulting binary to a directory on your `PATH`:
+
+```shell
+sudo mv melange /usr/local/bin/melange
+```
+
+---
+
+## Verify the installation
+
+After installing by any method, confirm melange is working:
+
+```shell
+melange version
+```
+
+---
+
+## Shell completion
+
+melange includes a `completion` subcommand that generates shell completion scripts for Bash, Zsh, Fish, and PowerShell.
+
+<CodeGroup>
+
+```shell Bash (Linux)
+# Load for the current session
+source <(melange completion bash)
+
+# Load permanently
+melange completion bash > /etc/bash_completion.d/melange
+```
+
+```shell Bash (macOS)
+# Load for the current session
+source <(melange completion bash)
+
+# Load permanently
+melange completion bash > /usr/local/etc/bash_completion.d/melange
+```
+
+```shell Zsh
+# Enable shell completion if not already active
+echo "autoload -U compinit; compinit" >> ~/.zshrc
+
+# Install the completion script (run once)
+melange completion zsh > "${fpath[1]}/_melange"
+
+# Start a new shell for the change to take effect
+```
+
+```shell Fish
+# Load for the current session
+melange completion fish | source
+
+# Load permanently (run once)
+melange completion fish > ~/.config/fish/completions/melange.fish
+```
+
+</CodeGroup>
+
+<Note>
+  After installing a permanent completion script, start a new shell session for the completions to take effect.
+</Note>
+
+---
+
+## Choosing a runner
+
+By default, melange selects a runner based on your platform. You can override this with the `--runner` flag on `melange build`:
+
+| Runner | When to use |
+|---|---|
+| `bubblewrap` | Default on Linux when running melange natively. Requires no container daemon. |
+| `docker` | Use when bubblewrap is unavailable or when running on macOS. Requires Docker. |
+| `qemu` | Use for cross-architecture builds that need full machine emulation. |
+
+```shell
+melange build hello.yaml --runner docker
+```
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first APK package with the GNU Hello example.
+  </Card>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn about the melange build model and its relationship with apko.
+  </Card>
+</CardGroup>

@@ -1,0 +1,180 @@
+---
+title: "Multi-Architecture APK Builds with melange and QEMU"
+sidebarTitle: "Multi-Architecture"
+description: "Build APK packages for x86_64, aarch64, armv7, ppc64le, s390x, and more using QEMU emulation — no cross-compilation required."
+---
+
+One of melange's headline features is that it builds for multiple CPU architectures out of the box. When you run `melange build`, it iterates over every supported architecture and produces a separate set of APK files for each one — all without requiring you to write cross-compilation logic in your pipelines. QEMU user-mode emulation handles running foreign-architecture binaries transparently.
+
+## Supported architectures
+
+melange can target the following architectures:
+
+| Architecture | Description |
+|---|---|
+| `x86_64` | 64-bit x86 (Intel/AMD) |
+| `aarch64` | 64-bit ARM (Apple Silicon, AWS Graviton, etc.) |
+| `armv7` | 32-bit ARMv7 |
+| `arm/v6` | 32-bit ARMv6 |
+| `ppc64le` | 64-bit POWER, little-endian |
+| `s390x` | IBM Z (mainframe) |
+| `386` | 32-bit x86 |
+
+## Default behaviour: build for all architectures
+
+If `package.target-architectures` is empty (or omitted), melange builds for every architecture in the list above:
+
+```yaml
+package:
+  name: hello
+  version: 2.12
+  epoch: 0
+  description: "the GNU hello world program"
+  # target-architectures not set → build for all
+```
+
+Running the build produces an output directory organised by architecture:
+
+```
+packages/
+├── x86_64/
+│   ├── hello-2.12-r0.apk
+│   └── APKINDEX.tar.gz
+├── aarch64/
+│   ├── hello-2.12-r0.apk
+│   └── APKINDEX.tar.gz
+├── armv7/
+│   ├── hello-2.12-r0.apk
+│   └── APKINDEX.tar.gz
+└── ...
+```
+
+## Targeting specific architectures
+
+### At the command line
+
+Pass `--arch` with a comma-separated list to restrict a build to one or more architectures:
+
+```shell
+# Build only for x86_64
+melange build melange.yaml --arch x86_64
+
+# Build for x86_64 and aarch64
+melange build melange.yaml --arch x86_64,aarch64
+
+# Build for the current host architecture
+melange build melange.yaml --arch $(uname -m)
+```
+
+### In the YAML file
+
+Set `package.target-architectures` to restrict the build configuration itself:
+
+```yaml
+package:
+  name: my-x86-only-tool
+  version: 1.0.0
+  epoch: 0
+  target-architectures:
+    - x86_64
+    - aarch64
+```
+
+<Note>
+  The `--arch` flag overrides `target-architectures` when both are specified. Use the YAML field when a package genuinely cannot be built for certain architectures (e.g., it contains architecture-specific assembly).
+</Note>
+
+## How QEMU emulation works
+
+When melange builds for an architecture that differs from the host CPU, it relies on [binfmt_misc](https://en.wikipedia.org/wiki/Binfmt_misc) kernel support to transparently execute foreign-architecture ELF binaries through QEMU user-mode emulation.
+
+From the pipeline's perspective, nothing changes — `./configure && make` works the same whether the build is native or emulated. melange does not require cross-compilation toolchains, sysroots, or `CROSS_COMPILE` environment variables.
+
+<Tip>
+  To enable `binfmt_misc` handlers on a Linux host, install `qemu-user-static` and run the appropriate registration command. On Docker Desktop and many CI environments (including GitHub Actions with the `setup-qemu-action`), this is already configured.
+</Tip>
+
+## Architecture substitutions in pipelines
+
+Use the built-in substitution variables to write architecture-aware pipeline steps without hardcoding values:
+
+| Variable | Example value | Description |
+|---|---|---|
+| `${{build.arch}}` | `aarch64` | melange architecture name |
+| `${{build.goarch}}` | `arm64` | Go's `GOARCH` equivalent |
+
+Example: downloading an architecture-specific binary in a pipeline:
+
+```yaml
+pipeline:
+  - runs: |
+      ARCH="${{build.arch}}"
+      curl -Lo /usr/bin/mytool \
+        "https://example.com/releases/mytool-${ARCH}"
+      chmod +x /usr/bin/mytool
+```
+
+## Choosing a runner
+
+melange supports three runners for executing pipeline steps. The right choice depends on your host operating system and whether you need to build for foreign architectures.
+
+<CardGroup cols={3}>
+  <Card title="bubblewrap" icon="cube">
+    **Linux only.** Uses `bwrap` to create a lightweight container from the guest directory. Fastest option on Linux; no Docker daemon required. The default on Linux hosts.
+  </Card>
+  <Card title="docker" icon="docker">
+    **Linux and macOS.** Runs pipeline steps inside a Docker container. Requires Docker Desktop or a Docker daemon. Useful when bubblewrap is unavailable or Docker is already part of your workflow.
+  </Card>
+  <Card title="qemu" icon="microchip">
+    **Full VM.** Boots a QEMU virtual machine for each build. Required for strict isolation or when `binfmt_misc` is not available. Slower than bubblewrap but most portable. The default on macOS hosts.
+  </Card>
+</CardGroup>
+
+Select a runner explicitly with `--runner`:
+
+```shell
+# Use Docker
+melange build melange.yaml --runner docker
+
+# Use bubblewrap (Linux only)
+melange build melange.yaml --runner bubblewrap
+
+# Use QEMU
+melange build melange.yaml --runner qemu
+```
+
+### When to use which runner
+
+| Scenario | Recommended runner |
+|---|---|
+| Linux CI/CD, maximum speed | `bubblewrap` |
+| macOS local development | `docker` or `qemu` |
+| Strict sandbox isolation | `qemu` |
+| Docker already in use | `docker` |
+| No Docker daemon available | `bubblewrap` (Linux) or `qemu` |
+
+## Using the Docker container image for multi-arch builds
+
+The official melange container image supports multi-architecture builds when run with Docker:
+
+```shell
+docker run --privileged --rm -v "${PWD}:/work" \
+  cgr.dev/chainguard/melange build melange.yaml
+```
+
+The `--privileged` flag is required to allow `binfmt_misc` registration and bubblewrap to function inside the container. To build only for the current host architecture:
+
+```shell
+docker run --privileged --rm -v "${PWD}:/work" \
+  cgr.dev/chainguard/melange build melange.yaml --arch $(uname -m)
+```
+
+## QEMU runner and build cache
+
+When using the QEMU runner, the build cache is mounted read-only by default (using 9p + overlay). To persist cache writes back to the host — which can significantly speed up repeated builds — enable virtiofs:
+
+```shell
+QEMU_USE_VIRTIOFS=1 melange build melange.yaml --runner qemu --cache-dir /path/to/cache
+```
+
+See the [Build Cache](/guides/build-cache) guide for full details.

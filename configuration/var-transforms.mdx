@@ -1,0 +1,159 @@
+---
+title: "Variable Transformations with var-transforms in melange"
+sidebarTitle: "Var Transforms"
+description: "Learn how to use var-transforms in melange to convert non-standard upstream version strings into valid APK versions and derived template variables."
+---
+
+The `var-transforms:` section lets you create new template variables by applying regular-expression transformations to existing ones. This is most commonly needed when an upstream project uses a version string format that is incompatible with APK version requirements — for example, using `+` as a separator — but the same version string is also needed verbatim to fetch the correct source archive or check out the correct Git tag.
+
+---
+
+## Why var-transforms exist
+
+APK version strings have strict formatting rules. Certain characters — most notably `+` — are not permitted in package version numbers because APK treats them as build-metadata delimiters. However, many upstream projects use such characters in their release tags. Without `var-transforms`, you would have to choose between a valid APK version and a version string that correctly identifies the upstream release artefact.
+
+`var-transforms` resolves this tension: you declare the canonical APK-safe version in `package.version`, and then use `var-transforms` to reconstruct the upstream-compatible form as a new variable that can be referenced in pipeline steps.
+
+---
+
+## Fields
+
+Each entry in `var-transforms:` is an object with four required fields:
+
+<ParamField path="from" type="string" required>
+  The source template variable to transform. This is typically a built-in substitution such as `${{package.version}}`, but can also be a previously-declared custom variable (`${{vars.<name>}}`).
+
+  ```yaml
+  from: ${{package.version}}
+  ```
+</ParamField>
+
+<ParamField path="match" type="string" required>
+  A Go regular expression matched against the value of `from`. Capture groups (`(\d+)`, etc.) can be referenced in `replace`.
+
+  ```yaml
+  match: \\.(\d+)$
+  ```
+</ParamField>
+
+<ParamField path="replace" type="string" required>
+  The replacement string applied to all regex matches. Use `$1`, `$2`, … to reference capture groups. When you need to join two or more groups with a literal character, use the `${1}`, `${2}` form to avoid ambiguity in Go's regex engine.
+
+  ```yaml
+  replace: +$1
+  ```
+</ParamField>
+
+<ParamField path="to" type="string" required>
+  The name of the new variable to create. The resulting value is accessible as `${{vars.<to>}}` in all subsequent pipeline steps.
+
+  ```yaml
+  to: mangled-package-version
+  ```
+</ParamField>
+
+<Note>
+  If your `replace` string uses expand references (`$1` or `${1}`), make sure the regex in `match` covers the entire string from left to right. If the package version can be either `1.2.3.4` or `1.2.3.4-1`, your regex must account for the optional trailing portion — for example with `.*` at the end.
+</Note>
+
+---
+
+## Example: OpenJDK version transformation
+
+The OpenJDK project appends a `+` between the base version and the build number in its release tags (e.g. `jdk-17.0.7+5`). Because `+` is not valid in an APK version, the melange `package.version` stores the dotted form `17.0.7.5`. A `var-transform` converts it back to the `+`-separated form required to fetch the correct upstream tarball.
+
+**Build file snippet:**
+
+```yaml
+package:
+  name: openjdk-17
+  version: 17.0.7.5
+```
+
+**Transformation:**
+
+```yaml
+var-transforms:
+  - from: ${{package.version}}
+    match: \\.(\d+)$
+    replace: +$1
+    to: mangled-package-version
+```
+
+This replaces the last `.digit` segment with `+digit`, turning `17.0.7.5` into `17.0.7+5`.
+
+**Using the new variable in a `fetch` step:**
+
+```yaml
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/openjdk/jdk17u/archive/refs/tags/jdk-${{vars.mangled-package-version}}.tar.gz
+```
+
+**Using the new variable in a `git-checkout` step:**
+
+```yaml
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/openjdk/jdk12u
+      tag: ${{vars.mangled-package-version}}
+      expected-commit: 5018cdd1904357c04c9c41e0f8fe8994916cb638
+```
+
+<Note>
+  If `melange bump` is run on a build file that uses `git-checkout` with `expected-commit`, it will automatically update the `expected-commit` value to match the new tag.
+</Note>
+
+---
+
+## Example: Joining capture groups with `_`
+
+When you need to join two capture groups with a literal character such as `_`, use the `${1}` form for both references to prevent Go's regex engine from interpreting the digit as part of a multi-digit group number (see [golang/go#32885](https://github.com/golang/go/issues/32885#issuecomment-507477621)).
+
+The following transform converts `1.3.6.8` into `1.3.6_8`:
+
+```yaml
+var-transforms:
+  - from: ${{package.version}}
+    match: ^(\d+\.\d+\.\d+).(\d+).*
+    replace: "${1}_${2}"
+    to: mangled-version-binary
+```
+
+The result is then available as `${{vars.mangled-version-binary}}` in pipeline steps.
+
+---
+
+## Multiple transforms
+
+You can declare multiple entries in `var-transforms:`. They are applied in order, and each `to` variable becomes available to subsequent transforms and pipeline steps:
+
+```yaml
+var-transforms:
+  - from: ${{package.version}}
+    match: \\.(\d+)$
+    replace: +$1
+    to: upstream-version
+
+  - from: ${{vars.upstream-version}}
+    match: ^jdk-
+    replace: ""
+    to: version-no-prefix
+```
+
+---
+
+## Helpful tools
+
+Constructing regular expressions can be tricky. The following online tools are useful for iterating on patterns before committing them to your build file:
+
+<CardGroup cols={2}>
+  <Card title="regex101" icon="code" href="https://regex101.com/">
+    Interactive regex tester with Go flavour support and step-by-step match explanation.
+  </Card>
+  <Card title="regexr" icon="code" href="https://regexr.com/">
+    Visual regex editor with a library of common patterns.
+  </Card>
+</CardGroup>

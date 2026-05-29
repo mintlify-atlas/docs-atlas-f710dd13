@@ -1,0 +1,210 @@
+---
+title: "Using Build Cache to Speed Up melange Builds"
+sidebarTitle: "Build Cache"
+description: "Mount a local cache directory into melange builds to avoid re-downloading Go modules, Python packages, npm packages, and other build dependencies."
+---
+
+Every package build downloads its dependencies from the internet: Go modules, Python wheels, npm packages, Maven JARs, and so on. When you run the same build repeatedly — during iteration or in CI — those downloads are wasted time. melange's build cache feature lets you mount a directory from your host into the build environment at `/var/cache/melange`, so subsequent builds can reuse artefacts that were fetched before.
+
+## How the cache works
+
+Pass `--cache-dir` to `melange build` with a path to a directory on your local filesystem:
+
+```shell
+melange build melange.yaml --cache-dir /path/to/my/cache
+```
+
+melange mounts that directory inside the build guest at `/var/cache/melange`. Build tools that are configured to look there will find cached artefacts instead of downloading them. For several ecosystems — Python `uv`, `pip`, PHP Composer, and npm — melange sets the relevant environment variables automatically so no extra configuration is needed.
+
+<Note>
+  Whether writes to `/var/cache/melange` during a build flow back to your host filesystem depends on which runner you use. See [Cache Persistence by Runner](#cache-persistence-by-runner) below.
+</Note>
+
+## Go modules
+
+Go does not set its module cache automatically; you must tell it where to look. If you already have Go installed locally, you can pass your existing module cache directly:
+
+```shell
+melange build melange.yaml --cache-dir "$(go env GOMODCACHE)"
+```
+
+Then configure the `GOMODCACHE` environment variable inside your melange config so the Go toolchain inside the guest finds the cache:
+
+```yaml
+environment:
+  contents:
+    packages:
+      - go
+  environment:
+    GOMODCACHE: '/var/cache/melange'
+```
+
+Alternatively, set it inline in a pipeline step:
+
+```yaml
+pipeline:
+  - runs: |
+      GOMODCACHE="/var/cache/melange"
+      go build ./...
+```
+
+## Python uv
+
+melange automatically sets `UV_CACHE_DIR=/var/cache/melange/uv`. Simply point `--cache-dir` at a directory that contains (or will contain) a `uv` subdirectory:
+
+```shell
+# Create the cache directory once
+mkdir -p ~/.cache/melange/uv
+
+# Pass the parent directory to melange
+melange build melange.yaml --cache-dir ~/.cache/melange
+```
+
+The default can be overridden if needed:
+
+```yaml
+environment:
+  environment:
+    UV_CACHE_DIR: '/var/cache/melange/uv'   # This is the default
+```
+
+## Python pip
+
+melange automatically sets `PIP_CACHE_DIR=/var/cache/melange/pip`. No YAML changes are required:
+
+```shell
+mkdir -p ~/.cache/melange/pip
+melange build melange.yaml --cache-dir ~/.cache/melange
+```
+
+To override the default path:
+
+```yaml
+environment:
+  environment:
+    PIP_CACHE_DIR: '/var/cache/melange/pip'   # This is the default
+```
+
+Or set it inline:
+
+```yaml
+pipeline:
+  - runs: |
+      PIP_CACHE_DIR="/var/cache/melange/pip"
+      pip install -r requirements.txt
+```
+
+## PHP Composer
+
+melange automatically sets `COMPOSER_CACHE_DIR=/var/cache/melange/composer`:
+
+```shell
+mkdir -p ~/.cache/melange/composer
+melange build melange.yaml --cache-dir ~/.cache/melange
+```
+
+Override if needed:
+
+```yaml
+environment:
+  environment:
+    COMPOSER_CACHE_DIR: '/var/cache/melange/composer'   # This is the default
+```
+
+Or inline:
+
+```yaml
+pipeline:
+  - runs: |
+      COMPOSER_CACHE_DIR="/var/cache/melange/composer"
+      composer install
+```
+
+## npm
+
+melange automatically sets `npm_config_cache=/var/cache/melange/npm`:
+
+```shell
+mkdir -p ~/.cache/melange/npm
+melange build melange.yaml --cache-dir ~/.cache/melange
+```
+
+Override if needed:
+
+```yaml
+environment:
+  environment:
+    npm_config_cache: '/var/cache/melange/npm'   # This is the default
+```
+
+Or inline:
+
+```yaml
+pipeline:
+  - runs: |
+      npm_config_cache="/var/cache/melange/npm"
+      npm install
+```
+
+## Maven
+
+Maven caching is activated automatically when you use the `maven/configure-mirror` or `maven/pombump` built-in pipelines. When a cache directory is mounted at `/var/cache/melange`, those pipelines symlink `~/.m2/repository` to `/var/cache/melange/m2repository`, so Maven's default local repository is backed by the cache with no extra configuration:
+
+```shell
+melange build melange.yaml --cache-dir /path/to/my/cache
+```
+
+This is especially useful for large Java projects — for example, `apicurio-registry` requires over 1 GB of Maven dependencies.
+
+## Cache persistence by runner
+
+Whether writes to `/var/cache/melange` during a build flow back to your host depends on the runner:
+
+| Runner | Mount type | Writes persist to host |
+|--------|------------|------------------------|
+| Docker | Bind mount (read-write) | Yes |
+| Bubblewrap | Bind mount (read-write) | Yes |
+| QEMU (default) | 9p (read-only) + overlay | No |
+| QEMU (virtiofs) | virtiofs (read-write) | Yes |
+
+### Docker and Bubblewrap
+
+Both runners use a standard read-write bind mount. Any files written to `/var/cache/melange` during the build are written directly to your host directory, so the cache grows automatically across builds.
+
+### QEMU (default, without virtiofs)
+
+The default QEMU runner mounts the cache using 9p with a read-only flag and layers a temporary overlay on top:
+
+- **Lower layer:** Read-only 9p mount of your host cache directory
+- **Upper layer:** Temporary writable directory inside the guest
+
+Builds can read from your pre-populated cache, but any new files written during the build go to the overlay and are discarded when the build finishes. To persist QEMU cache writes, use virtiofs.
+
+### QEMU with virtiofs
+
+Enable virtiofs by setting the `QEMU_USE_VIRTIOFS` environment variable:
+
+```shell
+QEMU_USE_VIRTIOFS=1 melange build melange.yaml --runner qemu --cache-dir /path/to/cache
+```
+
+<Warning>
+  The `virtiofsd` binary must be present on your host at one of the standard locations (`/usr/libexec/virtiofsd`, `/usr/lib/qemu/virtiofsd`, or in `$PATH`). If you installed virtiofsd to a non-standard location (e.g., via Homebrew on macOS), set `QEMU_VIRTIOFS_PATH` to the directory containing the binary. If `QEMU_USE_VIRTIOFS=1` is set but `virtiofsd` is not found, melange will return an error.
+</Warning>
+
+virtiofs provides two advantages over the default 9p mount:
+
+- **Cache persistence** — writes during the build are saved to your host filesystem.
+- **Better I/O performance** — virtiofs generally outperforms 9p for build workloads.
+
+## Preloading a cache from a remote source
+
+For CI environments, you can pre-populate a cache directory from a remote bucket or another directory using the `--cache-source` flag:
+
+```shell
+melange build melange.yaml \
+  --cache-source gs://my-build-cache-bucket \
+  --cache-dir /tmp/melange-cache
+```
+
+melange will copy objects from the source into `--cache-dir` before the build begins, letting the build immediately benefit from previously cached artefacts.

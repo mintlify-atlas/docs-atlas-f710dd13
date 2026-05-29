@@ -1,0 +1,133 @@
+---
+title: "How melange Builds Packages: Process and Directories"
+sidebarTitle: "Build Process"
+description: "Understand how melange sets up the guest environment, manages source and workspace directories, and executes each pipeline step to produce APK packages."
+---
+
+melange turns a declarative YAML file into a fully formed APK package by orchestrating a sequence of well-defined stages: laying out build dependencies, copying your sources into an isolated workspace, and executing each pipeline step inside a contained guest environment. Understanding this flow helps you write better pipelines, debug failures, and reason about where files end up.
+
+## Key sections of a melange YAML
+
+Before diving into the build mechanics, these four YAML fields drive everything that happens:
+
+- **`package.target-architectures`** — which architectures to build for (empty means all available).
+- **`package.dependencies.runtime`** — APK packages that must be present in the *final* package.
+- **`environment.contents`** — APK packages available *during the build* but not in the final package.
+- **`pipeline`** — ordered list of steps executed inside the guest.
+
+Each pipeline step is either a `runs:` step (executes shell commands) or a `uses:` step (invokes a named pipeline). A `uses:` step can itself declare additional `needs.packages`, which melange automatically adds to the build environment.
+
+## The three build directories
+
+melange keeps three separate directories cleanly separated throughout a build.
+
+<CardGroup cols={3}>
+  <Card title="Source Directory" icon="folder-open">
+    Your original project files. Defaults to the current working directory. melange **never modifies** files here.
+  </Card>
+  <Card title="Workspace Directory" icon="copy">
+    A copy of your sources that pipeline steps can freely modify. It is bind-mounted into the guest at `/home/build`.
+  </Card>
+  <Card title="Guest Directory" icon="server">
+    A temporary root filesystem (usually under `/tmp`) populated with APK packages from `environment.contents`. The pipeline runs inside this environment.
+  </Card>
+</CardGroup>
+
+### How the directories relate
+
+Given a project at `/home/user/src` containing `main.go`, `go.mod`, and `go.sum`, with `busybox` as the only build dependency, the directory layout looks like this:
+
+```
+/home/user/src                <-- source directory
+/home/user/src/main.go        <-- original file in source
+/home/user/src/go.mod         <-- original file in source
+/home/user/src/go.sum         <-- original file in source
+
+/tmp/ws                       <-- workspace directory, bind-mounted to runner:/home/build
+/tmp/ws/main.go               <-- copied from source directory
+/tmp/ws/go.mod                <-- copied from source directory
+/tmp/ws/go.sum                <-- copied from source directory
+
+/tmp/guest                     <-- temporary guest directory created by melange
+/tmp/guest/bin                 <-- files and dirs created by apk package dependencies
+/tmp/guest/bin/busybox         <-- files and dirs created by apk package dependencies
+/tmp/guest/home/build          <-- bind-mounted from workspace at /tmp/ws
+/tmp/guest/home/build/main.go  <-- file bind-mounted from workspace at /tmp/ws
+/tmp/guest/home/build/go.mod   <-- file bind-mounted from workspace at /tmp/ws
+/tmp/guest/home/build/go.sum   <-- file bind-mounted from workspace at /tmp/ws
+```
+
+Because the workspace is bind-mounted, any changes made by pipeline steps are reflected on the host filesystem at `/tmp/ws` — they survive after the guest is torn down. If you point `--workspace-dir` at the same path as your source directory, the workspace is never cleaned up, and build artifacts persist there permanently.
+
+## The build sequence
+
+melange executes the core `BuildPackage()` routine in the following order:
+
+<Steps>
+  <Step title="Resolve pipeline dependencies">
+    Each pipeline step is inspected for a `needs:` section. Any listed packages are merged into the `environment.contents` package list.
+  </Step>
+  <Step title="Lay out the guest directory">
+    melange uses [apko](https://github.com/chainguard-dev/apko) to fetch and unpack all packages listed in `environment.contents` into the guest directory, creating a fully functional (but minimal) root filesystem.
+  </Step>
+  <Step title="Overlay /bin/sh">
+    A shell binary is overlaid for compatibility. See the [Shell Overlay documentation](https://github.com/chainguard-dev/melange/blob/main/docs/SHELL-OVERLAY.md) for details.
+  </Step>
+  <Step title="Populate the build cache">
+    If `--cache-dir` is provided, the cache is mounted at `/var/cache/melange` inside the guest. See [Build Cache](/guides/build-cache) for details.
+  </Step>
+  <Step title="Create and populate the workspace">
+    The workspace directory is created and all files from the source directory are copied into it (respecting any exclusion rules). The workspace is then bind-mounted into the guest at `/home/build`.
+  </Step>
+  <Step title="Execute pipeline steps">
+    Each step runs in turn inside the guest environment, with `/home/build` as the working directory. `runs:` steps execute shell commands; `uses:` steps invoke named pipelines.
+  </Step>
+  <Step title="Build subpackages">
+    Any `subpackages:` defined in the YAML are built using the same process, producing separate `.apk` files.
+  </Step>
+  <Step title="Emit APK files">
+    The final package and all subpackages are written to `--out-dir` (default: `./packages/`), organized by architecture.
+  </Step>
+  <Step title="Generate and sign the index">
+    If `--generate-index` is enabled (the default), an `APKINDEX.tar.gz` is produced and optionally signed.
+  </Step>
+  <Step title="Clean up">
+    The guest and workspace directories are removed unless `--cleanup=false` is passed.
+  </Step>
+</Steps>
+
+## Containing the build with bubblewrap
+
+All `runs:` commands execute inside a virtual container created by [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`). The guest directory serves as the container's root filesystem, which means paths like `/usr/bin/gcc` inside the pipeline resolve to `${GUEST_DIR}/usr/bin/gcc` on the host. This containment prevents pipeline steps from accidentally modifying your host system.
+
+## Alternate architecture builds
+
+When melange builds for the host architecture (e.g., `x86_64` on an `x86_64` machine), all `runs:` commands execute natively. When building for a different architecture — such as `aarch64` on an `x86_64` host — melange uses [binfmt_misc](https://en.wikipedia.org/wiki/Binfmt_misc) user-mode emulation. melange itself requires no special configuration for this to work; you only need `binfmt_misc` handlers registered on the host. See [Multi-Architecture Builds](/guides/multi-arch) for more detail.
+
+## Debugging pipeline steps
+
+When a pipeline step fails it can be hard to know exactly which command caused the problem. Adding `set -x` to a `runs:` block causes the shell to print each command before executing it, revealing exactly what runs (and what fails):
+
+```yaml
+pipeline:
+  - name: Build application
+    runs: |
+      set -x
+      APP_HOME="${{targets.destdir}}/usr/share/myapp"
+      mkdir -p "${APP_HOME}"
+      make install DESTDIR="${{targets.destdir}}"
+```
+
+<Tip>
+  You can add `set -x` at the very top of a `runs:` block to trace the entire step, or insert it just before a suspicious command to limit noise.
+</Tip>
+
+## Preserving workspace changes
+
+By default the workspace is a temporary directory that is deleted at the end of the build. If you want to inspect build artefacts or keep intermediate files, pass `--workspace-dir` pointing to a directory you control:
+
+```shell
+melange build melange.yaml --workspace-dir ./build-workspace
+```
+
+If `--workspace-dir` is set to the same path as `--source-dir`, the workspace is never cleaned up and all changes made during the build persist in place.

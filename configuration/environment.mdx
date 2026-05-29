@@ -1,0 +1,199 @@
+---
+title: "Configuring the Build Environment in melange"
+sidebarTitle: "Environment"
+description: "Learn how to configure the melange build environment: package repositories, keyring entries, build-time packages, accounts, and environment variables."
+---
+
+The `environment:` section of a melange build file controls everything about the sandbox in which your package is compiled. It determines which APK repositories are searched, which signing keys validate those repositories, which packages are installed as build-time dependencies, which user runs the build, and which environment variables are set before any pipeline step executes. Getting the environment right is the first step to a reproducible, hermetic build.
+
+<Note>
+  The `environment` block can only be specified at the top-level of the build configuration. Subpackage build definitions inherit it automatically and cannot override it. Subpackage *test* definitions are the exception — they may declare their own environment.
+</Note>
+
+---
+
+## `contents`
+
+The `contents` sub-section defines the three ingredients of the build environment's package layer: repositories to fetch from, keys that authenticate those repositories, and the specific packages to install.
+
+### `repositories`
+
+A list of APK repository URLs. melange installs packages exclusively from these sources. Do not mix Alpine and Wolfi repositories in the same build — they use incompatible package sets.
+
+<CardGroup cols={2}>
+  <Card title="Wolfi OS" icon="shield">
+    ```yaml
+    environment:
+      contents:
+        repositories:
+          - https://packages.wolfi.dev/os
+    ```
+  </Card>
+  <Card title="Alpine Edge" icon="mountain">
+    ```yaml
+    environment:
+      contents:
+        repositories:
+          - https://dl-cdn.alpinelinux.org/alpine/edge/main
+    ```
+  </Card>
+</CardGroup>
+
+When building locally (rather than submitting to the Wolfi OS repository), you also need the Wolfi bootstrap stage3 repository to resolve base packages:
+
+```yaml
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/bootstrap/stage3
+      - https://packages.wolfi.dev/os
+```
+
+### `keyring`
+
+A list of public-key URLs used to verify repository signatures. Every repository you add should have a corresponding keyring entry.
+
+```yaml
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+```
+
+For local builds that include the bootstrap stage3 repository:
+
+```yaml
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/bootstrap/stage3/wolfi-signing.rsa.pub
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+```
+
+### `packages`
+
+The list of APK packages to install into the build environment. These are the **build-time** dependencies — tools and libraries needed to compile the package but not necessarily present at runtime. Runtime dependencies belong in `package.dependencies.runtime`.
+
+```yaml
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+```
+
+You can pin or constrain package versions using APK version syntax:
+
+```yaml
+environment:
+  contents:
+    packages:
+      - go>1.21        # anything newer than 1.21, excluding 1.21 itself
+      - foo=~4.5.6     # any version whose name starts with "4.5.6" (e.g. 4.5.6-r7)
+      - python3        # latest stable version
+```
+
+<Tip>
+  For additional information on APK version selection syntax, see the [Chainguard Academy article on apk version selection](https://edu.chainguard.dev/open-source/wolfi/apk-version-selection/).
+</Tip>
+
+---
+
+## Build environment vs. runtime dependencies
+
+It is important to distinguish between the two kinds of dependencies in a melange build file:
+
+| Where declared | When used | Example |
+|---|---|---|
+| `environment.contents.packages` | During the build pipeline only | `gcc`, `make`, `go`, `cmake` |
+| `package.dependencies.runtime` | After the package is installed by a user | `openssl`, `ca-certificates-bundle` |
+
+Only packages listed under `environment.contents.packages` are present inside the build sandbox. Packages listed under `package.dependencies.runtime` are recorded in the APK metadata but are not available during the build itself.
+
+---
+
+## `environment` (environment variables)
+
+The nested `environment.environment` map sets shell environment variables that are exported for every pipeline step. This is where you configure build flags, tool paths, and cross-compilation settings.
+
+```yaml
+environment:
+  environment:
+    CGO_ENABLED: "0"
+    GOPATH: /go
+    GOPROXY: "off"
+```
+
+<Warning>
+  All values must be quoted strings. Boolean-like values such as `"0"` or `"1"` need explicit quoting.
+</Warning>
+
+---
+
+## `accounts`
+
+The `accounts` sub-section lets you create users and groups inside the build environment and optionally run the build as a specific user.
+
+### `run-as`
+
+Specifies which user should execute the build pipeline. The user must already exist or be declared in the `users` list. The default build user is `build`. Specifying `root` is sometimes necessary when the build requires privileged operations such as making a binary setuid.
+
+### `users` and `groups`
+
+Inject custom users and groups into the build image. Each user entry requires a `username`, `uid`, and `gid`. Each group entry requires a `groupname` and `gid`.
+
+```yaml
+environment:
+  accounts:
+    users:
+      - username: user_one
+        uid: 2000
+        gid: 1500
+      - username: user_two
+        uid: 2001
+        gid: 1500
+    groups:
+      - groupname: webusers
+        gid: 1500
+    run-as: user_one
+```
+
+---
+
+## Workspace and guest directories
+
+When melange runs a build it establishes two key locations inside the sandbox:
+
+- **Guest directory** — the root filesystem of the build environment, populated with the packages listed in `environment.contents.packages`.
+- **Workspace directory** (`/home/build`) — the working directory for the build. Source archives are extracted here and pipeline commands are executed from here. This path is available via the `${{package.srcdir}}` substitution.
+
+Build output is staged under `/home/build/melange-out/`. The substitutions `${{targets.destdir}}` and `${{targets.subpkgdir}}` point into this directory for the main package and subpackages respectively.
+
+---
+
+## Full environment example
+
+The following snippet shows a complete `environment` block for a Go package built against Wolfi, with CGO disabled and a pinned Go version:
+
+```yaml
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go>1.21
+      - build-base
+  environment:
+    CGO_ENABLED: "0"
+    GOPATH: /go
+    GOPROXY: "off"
+```

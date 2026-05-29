@@ -1,0 +1,115 @@
+---
+title: "melange index: Create APK Repository Indexes"
+sidebarTitle: "index"
+description: "Reference for melange index — create or update an APKINDEX.tar.gz repository index from APK files so package managers can resolve and install them."
+---
+
+`melange index` assembles an `APKINDEX.tar.gz` repository index from a collection of `.apk` files. The index is the metadata file that APK-based package managers (such as `apk` on Alpine and Wolfi) read to discover what packages are available, their versions, and their dependencies. Without an index, a directory of APK files cannot be used as a repository. The `melange build` command generates an index automatically after each build (via `--generate-index`), but `melange index` lets you create or rebuild indexes manually — for example, after adding new packages to an existing repository, or when assembling a repository from pre-built packages.
+
+## Usage
+
+```shell
+melange index [flags] <package1.apk> [package2.apk ...]
+```
+
+One or more `.apk` files are passed as positional arguments. The index is written to `APKINDEX.tar.gz` by default.
+
+## Examples
+
+```shell
+# Index all APKs in the current directory
+melange index *.apk
+
+# Write the index to a specific path
+melange index -o packages/x86_64/APKINDEX.tar.gz packages/x86_64/*.apk
+
+# Merge new packages into an existing index
+melange index --merge \
+  -s packages/x86_64/APKINDEX.tar.gz \
+  -o packages/x86_64/APKINDEX.tar.gz \
+  packages/x86_64/newpackage-1.0.0-r0.apk
+
+# Index only aarch64 packages
+melange index --arch aarch64 -o packages/aarch64/APKINDEX.tar.gz packages/aarch64/*.apk
+
+# Create and sign the index in one step
+melange index \
+  --signing-key local-melange.rsa \
+  -o packages/x86_64/APKINDEX.tar.gz \
+  packages/x86_64/*.apk
+```
+
+## Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--output` | `-o` | `APKINDEX.tar.gz` | Output path for the generated index file |
+| `--source` | `-s` | `APKINDEX.tar.gz` | Existing index file to use as a source for pre-existing entries (used with `--merge`) |
+| `--merge` | `-m` | `false` | Merge new package entries with entries from the source index instead of replacing them |
+| `--arch` | `-a` | _(all)_ | Include only packages matching this architecture |
+| `--signing-key` | — | _(none)_ | Optional RSA private key to sign the index immediately after creation |
+
+### Inherited
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Repository structure
+
+A typical multi-architecture repository has one index per architecture directory:
+
+```
+packages/
+├── x86_64/
+│   ├── APKINDEX.tar.gz       ← index for x86_64 packages
+│   ├── curl-8.5.0-r0.apk
+│   └── curl-dev-8.5.0-r0.apk
+└── aarch64/
+    ├── APKINDEX.tar.gz       ← index for aarch64 packages
+    ├── curl-8.5.0-r0.apk
+    └── curl-dev-8.5.0-r0.apk
+```
+
+Build each index separately with the `--arch` flag to avoid mixing architectures:
+
+```shell
+melange index --arch x86_64 \
+  -o packages/x86_64/APKINDEX.tar.gz \
+  packages/x86_64/*.apk
+
+melange index --arch aarch64 \
+  -o packages/aarch64/APKINDEX.tar.gz \
+  packages/aarch64/*.apk
+```
+
+## Merging indexes
+
+Use `--merge` when you want to add new packages to a repository without removing existing entries from the index. This is common in publishing workflows where packages are built incrementally:
+
+```shell
+melange index \
+  --merge \
+  --source packages/x86_64/APKINDEX.tar.gz \
+  --output packages/x86_64/APKINDEX.tar.gz \
+  packages/x86_64/newpackage-2.0.0-r0.apk
+```
+
+<Note>
+After creating or updating the index, sign it with `melange sign-index` to allow package managers to verify its integrity. An unsigned index works for local testing but is rejected by default in production APK configurations.
+</Note>
+
+## Using the repository
+
+Once the index is created and signed, configure `apk` to use the repository:
+
+```shell
+apk add --repository ./packages --allow-untrusted mypackage
+```
+
+For a signed repository, install the public key first:
+
+```shell
+cp local-melange.rsa.pub /etc/apk/keys/
+apk add --repository ./packages mypackage
+```

@@ -1,0 +1,210 @@
+---
+title: "Understanding melange Pipelines: Build Steps & DSL"
+sidebarTitle: "Overview"
+description: "Learn how melange pipelines work: ordered build steps defined in YAML using runs: shell commands and uses: named pipeline references."
+---
+
+Pipelines are the heart of every melange build. A pipeline is an ordered list of build steps declared inside your melange YAML configuration file. Each step either executes a shell snippet directly or invokes a named, reusable pipeline by reference. Steps share a common workspace directory — the build directory where sources are unpacked and artifacts are assembled — so the output of one step is naturally available to the next.
+
+## Step types
+
+Every entry in the `pipeline:` list is either a `runs:` step (inline shell) or a `uses:` step (named pipeline). Both types accept optional fields that control naming, inputs, environment variables, and conditional execution.
+
+### `runs:` — inline shell
+
+Use `runs:` when you need to execute arbitrary shell commands directly. The value is a multi-line string interpreted by the build shell:
+
+```yaml
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      cp hello "${{targets.destdir}}/usr/bin/hello"
+```
+
+### `uses:` — named pipeline
+
+Use `uses:` to invoke a built-in or custom pipeline by its file-system path (without the `.yaml` extension). Named pipelines accept structured inputs through the `with:` block:
+
+```yaml
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+```
+
+## Pipeline step fields
+
+Each step in the `pipeline:` list supports the following fields:
+
+<AccordionGroup>
+  <Accordion title="name">
+    An optional human-readable label for the step, useful for log output and debugging.
+
+    ```yaml
+    - name: Configure and compile
+      runs: |
+        ./configure --prefix=/usr
+        make -j$(nproc)
+    ```
+  </Accordion>
+
+  <Accordion title="runs">
+    An inline shell script. All commands run inside the build container with the workspace as the working directory.
+
+    ```yaml
+    - runs: |
+        echo "Hello from the build environment"
+    ```
+  </Accordion>
+
+  <Accordion title="uses">
+    The name of a pipeline to invoke, specified as a path relative to the pipelines directory (omitting `.yaml`). For example `uses: go/build` maps to `pkg/build/pipelines/go/build.yaml`.
+
+    ```yaml
+    - uses: autoconf/configure
+    ```
+  </Accordion>
+
+  <Accordion title="with">
+    A map of named inputs to pass to a `uses:` pipeline. The accepted keys are defined by the pipeline's `inputs:` schema.
+
+    ```yaml
+    - uses: git-checkout
+      with:
+        repository: https://github.com/puerco/hello.git
+        tag: v${{package.version}}
+        expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+    ```
+  </Accordion>
+
+  <Accordion title="environment">
+    Additional environment variables scoped to this step only.
+
+    ```yaml
+    - runs: |
+        cargo build --release
+      environment:
+        RUSTFLAGS: "-C target-feature=+crt-static"
+    ```
+  </Accordion>
+
+  <Accordion title="if">
+    A conditional expression. When the expression evaluates to false the step is skipped entirely. Melange variable substitutions are supported inside the expression.
+
+    ```yaml
+    - if: ${{build.arch}} == 'x86_64'
+      runs: |
+        echo "Running on x86_64"
+    ```
+  </Accordion>
+
+  <Accordion title="assertions">
+    Used on sub-pipeline wrappers to require that at least a minimum number of nested steps execute. Useful when combined with `if:` guards on sub-steps.
+
+    ```yaml
+    - assertions:
+        required-steps: 1
+      pipeline:
+        - if: ${{build.arch}} == 'x86_64'
+          runs: echo "x86_64 path"
+        - if: ${{build.arch}} == 'aarch64'
+          runs: echo "aarch64 path"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Shared workspace
+
+All steps in a pipeline share the same working directory. Melange places source files (fetched tarballs, git checkouts) into this directory, and each subsequent step can read or modify what was written before it. The special variable `${{targets.destdir}}` points to the staging area where files should be installed before they are packaged into the APK.
+
+## A complete example
+
+The following example from `examples/gnu-hello.yaml` shows a typical autoconf-based build using built-in pipelines:
+
+```yaml
+package:
+  name: hello
+  version: 2.12
+  epoch: 0
+  description: "the GNU hello world program"
+  copyright:
+    - license: GPL-3.0-or-later
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - build-base
+      - busybox
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+
+  - uses: autoconf/configure
+
+  - uses: autoconf/make
+
+  - uses: autoconf/make-install
+
+  - uses: strip
+```
+
+Each step in this file relies on a named pipeline. The `fetch` step downloads and verifies the source tarball. The `autoconf/*` steps run the standard `./configure && make && make install` sequence. Finally, `strip` removes debug symbols from the installed binaries to reduce APK size.
+
+## Conditional steps and sub-pipelines
+
+The `if:` field supports melange's variable substitution syntax to gate steps on build conditions such as architecture. The `conditional.yaml` example demonstrates all supported conditional patterns:
+
+```yaml
+pipeline:
+  # At least one of these sub-steps must run
+  - assertions:
+      required-steps: 1
+    pipeline:
+      - if: ${{build.arch}} == 'x86_64'
+        runs: |
+          echo "build arch is x86_64!"
+      - if: ${{build.arch}} == 'aarch64'
+        runs: |
+          echo "build arch is aarch64!"
+
+  # Runs only when package name matches
+  - if: ${{package.name}} == 'hello'
+    runs: |
+      echo "package name matches 'hello'!"
+
+  # Conditionally invoke a named pipeline
+  - uses: fetch
+    if: ${{package.name}} != 'hello'
+    with:
+      uri: https://example.com/source.tar.gz
+      expected-sha256: abc123...
+```
+
+<Note>
+  The `if:` expression is evaluated using Go's expression engine. Supported operators include `==`, `!=`, `<`, `>`, `<=`, and `>=`. Variable references use the `${{...}}` syntax.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Built-in Pipelines" icon="box" href="/pipelines/built-in">
+    Browse the complete catalogue of built-in pipelines including fetch, strip, patch, and ecosystem-specific helpers.
+  </Card>
+  <Card title="Custom Pipelines" icon="wrench" href="/pipelines/custom">
+    Learn how to write your own reusable pipeline YAML files and load them with `--pipeline-dir`.
+  </Card>
+  <Card title="Go Pipelines" icon="code" href="/pipelines/go">
+    Build Go projects with the `go/build` and `go/install` pipelines.
+  </Card>
+  <Card title="Cargo Pipeline" icon="cog" href="/pipelines/cargo">
+    Compile Rust packages using the `cargo/build` pipeline with auditable builds.
+  </Card>
+</CardGroup>

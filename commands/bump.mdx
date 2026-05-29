@@ -1,0 +1,100 @@
+---
+title: "melange bump: Update Package Versions in YAML"
+sidebarTitle: "bump"
+description: "Reference for melange bump — automatically update version, reset epoch, and optionally update git-checkout commit hashes in melange YAML config files."
+---
+
+`melange bump` automates the mechanical parts of updating a melange YAML file to a new upstream release. Given a config file and a target version string, it rewrites the `package.version` field, resets `package.epoch` to `0`, and can optionally update the `expected-commit` field of a `git-checkout` pipeline step. It is designed to be called by automated tooling such as Renovate or custom release scripts, so the updated file can go straight into a pull request without manual editing.
+
+## Usage
+
+```shell
+melange bump <config.yaml> <new-version> [flags]
+```
+
+Both arguments are required. The config file is updated in-place.
+
+## Examples
+
+```shell
+# Bump crane to version 0.20.0
+melange bump crane.yaml 0.20.0
+
+# Bump and also update the git-checkout expected commit hash
+melange bump crane.yaml 0.20.0 --expected-commit abc1234def5678
+
+# Bump a package that uses a date-based versioning scheme
+melange bump my-tool.yaml 2024.03.15
+```
+
+## What bump changes
+
+`melange bump` modifies the following fields in the YAML file:
+
+1. **`package.version`** — set to the new version string you provide
+2. **`package.epoch`** — reset to `0` (a version bump implies a fresh build epoch)
+3. **`expected-commit`** in a `git-checkout` pipeline step — updated only when `--expected-commit` is passed
+
+All other fields, comments, and formatting are preserved.
+
+## Before and after example
+
+**Before (`crane.yaml`):**
+
+```yaml
+package:
+  name: crane
+  version: 0.19.1
+  epoch: 2
+  description: "A tool for managing container images"
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/google/go-containerregistry
+      tag: v${{package.version}}
+      expected-commit: 6fd0e93c1c30c4a3a38c5af4b98e4a5bb5b85b1a
+```
+
+**After running `melange bump crane.yaml 0.20.0 --expected-commit 9f23e1d4a8b7c0512f6e83d1a9b4f72c3e8d1059`:**
+
+```yaml
+package:
+  name: crane
+  version: 0.20.0
+  epoch: 0
+  description: "A tool for managing container images"
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/google/go-containerregistry
+      tag: v${{package.version}}
+      expected-commit: 9f23e1d4a8b7c0512f6e83d1a9b4f72c3e8d1059
+```
+
+## Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--expected-commit` | _(empty)_ | Update the `expected-commit` field in a `git-checkout` pipeline step to this commit hash |
+
+### Inherited
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+<Note>
+`melange bump` resets `epoch` to `0` unconditionally. If you need to preserve a non-zero epoch (for example, when publishing a patch to the melange config without changing the upstream version), edit the epoch field manually after running `bump`.
+</Note>
+
+<Tip>
+In automated release pipelines, combine `melange bump` with `melange update-cache` to pre-populate the source cache for the new version before triggering the build:
+
+```shell
+melange bump mypackage.yaml 2.0.0
+melange update-cache --cache-dir ./melange-cache mypackage.yaml
+melange build mypackage.yaml --cache-dir ./melange-cache
+```
+</Tip>

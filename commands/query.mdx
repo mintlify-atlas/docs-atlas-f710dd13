@@ -1,0 +1,102 @@
+---
+title: "melange query: Extract Package Info from Config Files"
+sidebarTitle: "query"
+description: "Reference for melange query — use Go template syntax to extract any field from a melange YAML config file for use in CI scripts and automation."
+---
+
+`melange query` reads a melange YAML configuration file and evaluates a [Go template](https://pkg.go.dev/text/template) expression against it, printing the result to stdout. This lets you extract any field from a package config — name, version, epoch, dependencies, or any other structured data — without writing a dedicated YAML parser. The output is plain text, making it easy to consume in shell scripts, CI pipelines, and automation tooling.
+
+## Usage
+
+```shell
+melange query <config.yaml> "<go-template>" [flags]
+```
+
+Both arguments are required. The template is evaluated against the top-level melange config structure, so fields are accessed via their Go struct paths (e.g. `.Package.Name`, `.Package.Version`).
+
+## Examples
+
+```shell
+# Print the full package version string (name-version-rEPOCH)
+melange query crane.yaml "{{ .Package.Name }}-{{ .Package.Version }}-r{{ .Package.Epoch }}"
+# Output: crane-0.19.1-r0
+
+# Print just the version
+melange query crane.yaml "{{ .Package.Version }}"
+# Output: 0.19.1
+
+# Print the package name
+melange query crane.yaml "{{ .Package.Name }}"
+# Output: crane
+
+# Print the epoch
+melange query crane.yaml "{{ .Package.Epoch }}"
+# Output: 0
+
+# Use in a shell script to tag a Docker image
+VERSION=$(melange query crane.yaml "{{ .Package.Version }}")
+docker tag crane:latest crane:${VERSION}
+```
+
+## Template data model
+
+The template receives the parsed melange config as its data object. Key top-level fields available in templates:
+
+| Template path | Type | Description |
+|---------------|------|-------------|
+| `.Package.Name` | string | Package name |
+| `.Package.Version` | string | Package version |
+| `.Package.Epoch` | int | Package epoch |
+| `.Package.Description` | string | Short package description |
+| `.Package.Dependencies.Runtime` | []string | Runtime dependencies |
+| `.Environment` | struct | Build environment configuration |
+| `.Pipeline` | []struct | Build pipeline steps |
+| `.Subpackages` | []struct | Subpackage definitions |
+
+<Note>
+The full data model mirrors the melange YAML schema. Any field that can appear in a melange YAML file can be accessed in a query template using Go template dot-notation.
+</Note>
+
+## Flags
+
+`melange query` has no command-specific flags beyond the inherited global:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Shorthand: package-version
+
+For the common case of printing the full package version string, the `melange package-version` command provides a convenient shorthand:
+
+```shell
+# Equivalent to: melange query config.yaml '{{ .Package.Name }}-{{ .Package.Version }}-r{{ .Package.Epoch }}'
+melange package-version crane.yaml
+# Output: crane-0.19.1-r0
+```
+
+## CI script usage
+
+`melange query` is particularly useful in CI/CD workflows where build steps need to read metadata from the package config:
+
+```shell
+#!/usr/bin/env bash
+set -euo pipefail
+
+NAME=$(melange query mypackage.yaml "{{ .Package.Name }}")
+VERSION=$(melange query mypackage.yaml "{{ .Package.Version }}")
+EPOCH=$(melange query mypackage.yaml "{{ .Package.Epoch }}")
+
+echo "Building ${NAME} ${VERSION} (epoch ${EPOCH})"
+
+melange build mypackage.yaml \
+  --signing-key local-melange.rsa \
+  --arch x86_64,aarch64
+
+# Upload to a GCS bucket named after the version
+gsutil cp packages/x86_64/*.apk "gs://my-repo/${VERSION}/"
+```
+
+<Tip>
+Go templates support the full range of template functions including `printf`, `index`, `range`, and `if` conditionals. For complex extractions, refer to the [Go template documentation](https://pkg.go.dev/text/template).
+</Tip>

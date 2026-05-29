@@ -1,0 +1,223 @@
+---
+title: "Building Go Packages with melange's go/ Pipelines"
+sidebarTitle: "Go Pipelines"
+description: "Use melange's go/build and go/install pipelines to compile Go projects into APK packages, with full control over flags, modules, and output paths."
+---
+
+Melange includes two built-in pipelines for building Go projects: `go/build` and `go/install`. Both invoke the Go compiler inside the build container and place the resulting binaries into the package staging directory. They differ primarily in how source code is obtained and how much control you have over the compiler invocation. A third pipeline, `go/bump`, handles updating Go module dependencies before compilation.
+
+## Choosing between `go/build` and `go/install`
+
+<CardGroup cols={2}>
+  <Card title="go/install" icon="bolt">
+    Downloads, compiles, and installs any publicly available Go package in a single step using `go install`. Best for simple, dependency-free builds of published modules.
+  </Card>
+  <Card title="go/build" icon="wrench">
+    Compiles Go source already present in the workspace using `go build`. Pairs with `git-checkout` for reproducible builds from a pinned tag or commit.
+  </Card>
+</CardGroup>
+
+## `go/install`
+
+The `go/install` pipeline is a declarative interface to the `go install` command. It downloads the source code and its dependencies from a public module proxy, compiles them, and moves the resulting binaries into the staging directory. It is the quickest way to package any publicly available Go project.
+
+### Inputs
+
+| Input | Default | Required | Description |
+|---|---|---|---|
+| `package` | — | ✅ | Import path of the package to install |
+| `version` | — | — | Version tag, commit hash, or ref (e.g. `HEAD`, `v1.2.3`) |
+| `prefix` | `usr` | — | Installation prefix |
+| `install-dir` | `bin` | — | Directory inside prefix where binaries land |
+| `ldflags` | — | — | Extra `-ldflags` arguments |
+| `strip` | `-w` | — | Strip ldflags (symbols) passed to the linker |
+| `tags` | — | — | Comma-separated list of build tags |
+| `toolchaintags` | `netgo,osusergo` | — | Default toolchain build tags |
+| `experiments` | `""` | — | Comma-separated `GOEXPERIMENT` names |
+| `amd64` | `v2` | — | `GOAMD64` microarchitecture level |
+| `arm64` | `v8.0` | — | `GOARM64` microarchitecture level |
+| `go-package` | `go` | — | The Go toolchain package to install in the build environment |
+
+### Example
+
+The following `go-install.yaml` example packages the `hello` project directly from its module path without any source checkout step:
+
+```yaml
+package:
+  name: hello
+  version: 0.0.1
+  epoch: 0
+  description: "A project that will greet the world infinitely"
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+
+pipeline:
+  - uses: go/install
+    with:
+      package: github.com/puerco/hello
+      version: v${{package.version}}
+```
+
+<Tip>
+  When using `go/install`, melange sets `GOBIN` to a temporary directory, runs `go install`, and then moves all produced binaries to `${{targets.contextdir}}/${{inputs.prefix}}/${{inputs.install-dir}}/`. You do not need to specify an output filename.
+</Tip>
+
+## `go/build`
+
+The `go/build` pipeline is a declarative interface to the `go build` command. It compiles Go source that is already present in the workspace — typically downloaded by a preceding `git-checkout` step. Unlike `go/install`, it gives you fine-grained control over which packages to compile, where to write the output binary, build modes, and more.
+
+### Inputs
+
+| Input | Default | Required | Description |
+|---|---|---|---|
+| `packages` | — | ✅ | Space-separated list of packages or files to compile (passed to `go build`) |
+| `output` | — | ✅ | Output binary filename |
+| `modroot` | `.` | — | Directory containing `go.mod`; the pipeline `cd`s here before building |
+| `prefix` | `usr` | — | Installation prefix |
+| `install-dir` | `bin` | — | Directory inside prefix where the binary is placed |
+| `tags` | — | — | Comma-separated build tags |
+| `toolchaintags` | `netgo,osusergo` | — | Default toolchain build tags |
+| `ldflags` | — | — | Extra `-ldflags` arguments |
+| `strip` | `-w` | — | Strip ldflags passed to the linker |
+| `deps` | — | — | Space-separated `module@version` pairs to `go get` before building |
+| `vendor` | `false` | — | Run `go mod vendor` after updating dependencies |
+| `tidy` | `false` | — | Run `go mod tidy` before building |
+| `experiments` | `""` | — | Comma-separated `GOEXPERIMENT` names |
+| `amd64` | `v2` | — | `GOAMD64` microarchitecture level |
+| `arm64` | `v8.0` | — | `GOARM64` microarchitecture level |
+| `buildmode` | `default` | — | The `-buildmode` value (see `go help buildmode`) |
+| `extra-args` | `""` | — | Extra arguments appended to the `go build` invocation |
+| `ignore-untracked-files` | `true` | — | Create a `.gitignore` to suppress untracked file warnings |
+| `go-package` | `go` | — | The Go toolchain package to install in the build environment |
+
+### Example
+
+The following `go-build.yaml` example checks out a git tag and compiles it with `go/build`:
+
+```yaml
+package:
+  name: hello
+  version: 0.0.1
+  epoch: 0
+  description: "A project that will greet the world infinitely"
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/puerco/hello.git
+      expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+      tag: v${{package.version}}
+
+  - uses: go/build
+    with:
+      tags: enterprise
+      packages: .
+      output: hello
+```
+
+<Note>
+  The `go/build` pipeline checks that `go.mod` exists in `modroot` before proceeding. If the file is missing, the build fails with a clear error message. Make sure your `git-checkout` step places sources in the expected location.
+</Note>
+
+## `go/bump`
+
+The `go/bump` pipeline updates Go module dependencies before compilation. It wraps the [GoBump](https://github.com/chainguard-dev/gobump) tool and is useful for applying security patches to transitive dependencies without modifying upstream source.
+
+### Key inputs
+
+| Input | Default | Description |
+|---|---|---|
+| `deps` | — | Space-separated `module@version` pairs to update |
+| `work` | `false` | Use `go work vendor` instead of `go mod vendor` (for Go workspaces) |
+
+### Example
+
+```yaml
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/puerco/hello.git
+      expected-commit: a73c4feb284dc6ed1e5758740f717f99dcd4c9d7
+      tag: v${{package.version}}
+
+  - uses: go/bump
+    with:
+      deps: github.com/sirupsen/logrus@v1.9.3
+
+  - uses: go/build
+    with:
+      tags: enterprise
+      packages: .
+      output: hello
+```
+
+## Compiler flags and tuning
+
+Both `go/build` and `go/install` share a common set of compiler-facing inputs:
+
+### Build tags
+
+Pass a comma-separated list via `tags:`. The toolchain defaults (`netgo,osusergo`) are always included through `toolchaintags` and enable static linking against the C library:
+
+```yaml
+- uses: go/build
+  with:
+    packages: .
+    output: mybin
+    tags: enterprise,premium
+```
+
+### Linker flags
+
+Use `ldflags:` to pass version strings, disable PIE, or inject build metadata:
+
+```yaml
+- uses: go/build
+  with:
+    packages: .
+    output: mybin
+    ldflags: -X main.Version=${{package.version}} -X main.Commit=${{package.epoch}}
+```
+
+### CGO and static builds
+
+The `toolchaintags` default (`netgo,osusergo`) instructs the linker to produce a static binary. For packages that require CGO, override `toolchaintags` with an empty string and set `CGO_ENABLED=1` in the step's `environment:`:
+
+```yaml
+- uses: go/build
+  with:
+    packages: .
+    output: mybin
+    toolchaintags: ""
+  environment:
+    CGO_ENABLED: "1"
+```
+
+### Module cache
+
+The `go/build` pipeline automatically sets `GOMODCACHE=/var/cache/melange/gomodcache`, allowing melange's build cache to persist downloaded modules across rebuilds.
+
+## Architecture-specific microarchitecture levels
+
+Both pipelines accept `amd64` and `arm64` inputs that map directly to `GOAMD64` and `GOARM64` environment variables:
+
+```yaml
+- uses: go/build
+  with:
+    packages: .
+    output: mybin
+    amd64: v3       # Require AVX2 on x86_64
+    arm64: v8.2     # Require ARMv8.2 on aarch64
+```

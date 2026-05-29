@@ -1,0 +1,106 @@
+---
+title: "melange CLI Reference: All Commands at a Glance"
+sidebarTitle: "Overview"
+description: "A complete reference of every melange command, from building and signing APK packages to querying config files and converting upstream formats."
+---
+
+melange is a declarative APK package builder. You describe your package in a YAML configuration file and melange handles fetching sources, running the build pipeline, linting the output, and assembling the final `.apk` artifact. The CLI is organized into focused subcommands — each does one thing well and composes cleanly with the others.
+
+## Global flag
+
+Every melange command inherits the `--log-level` flag from the root command:
+
+```shell
+melange --log-level debug build package.yaml
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## All commands
+
+<CardGroup cols={2}>
+  <Card title="build" icon="hammer" href="/commands/build">
+    Build an APK package from a YAML pipeline configuration file. The primary melange workflow.
+  </Card>
+  <Card title="test" icon="flask" href="/commands/test">
+    Run a dedicated test pipeline against a built package inside a sandboxed environment.
+  </Card>
+  <Card title="lint" icon="magnifying-glass" href="/commands/lint">
+    Lint an existing `.apk` file against a configurable set of quality and correctness checks.
+  </Card>
+  <Card title="keygen" icon="key" href="/commands/keygen">
+    Generate an RSA key pair (`.rsa` / `.rsa.pub`) used to sign packages and indexes.
+  </Card>
+  <Card title="sign" icon="signature" href="/commands/sign">
+    Sign individual `.apk` package files on disk with an RSA private key.
+  </Card>
+  <Card title="sign-index" icon="file-signature" href="/commands/sign">
+    Sign an `APKINDEX.tar.gz` repository index file.
+  </Card>
+  <Card title="index" icon="list" href="/commands/index">
+    Create or update an `APKINDEX.tar.gz` repository index from a collection of APK files.
+  </Card>
+  <Card title="bump" icon="arrow-up" href="/commands/bump">
+    Update the `version` (and reset `epoch`) in a melange YAML file to a new upstream release.
+  </Card>
+  <Card title="query" icon="terminal" href="/commands/query">
+    Extract arbitrary fields from a melange YAML using Go template syntax — useful in CI scripts.
+  </Card>
+  <Card title="convert" icon="arrows-rotate" href="/commands/convert">
+    Auto-generate melange YAML from Alpine APKBUILD files, Ruby gems, or Python PyPI packages.
+  </Card>
+  <Card title="compile" icon="code" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_compile.md">
+    Compile a YAML configuration file without executing the build runner.
+  </Card>
+  <Card title="scan" icon="radar" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_scan.md">
+    Scan an existing APK file and regenerate its `.PKGINFO` metadata.
+  </Card>
+  <Card title="source" icon="folder-open" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_source.md">
+    Manage source code: extract sources (`get`) or generate patches from modified source (`pop`).
+  </Card>
+  <Card title="update-cache" icon="database" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_update-cache.md">
+    Pre-populate the melange source artifact cache from a YAML config.
+  </Card>
+  <Card title="package-version" icon="tag" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_package-version.md">
+    Print the full `name-version-rEPOCH` string for a package config (shorthand for `query`).
+  </Card>
+  <Card title="version" icon="circle-info" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_version.md">
+    Print the melange binary version. Use `--json` for machine-readable output.
+  </Card>
+  <Card title="completion" icon="terminal" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_completion.md">
+    Generate shell completion scripts for bash, zsh, fish, or PowerShell.
+  </Card>
+  <Card title="initramfs" icon="microchip" href="https://github.com/chainguard-dev/melange/blob/main/docs/md/melange_initramfs.md">
+    Build a base initramfs image used by the QEMU runner for cross-architecture builds.
+  </Card>
+</CardGroup>
+
+## Quick-start workflow
+
+The typical end-to-end package publishing flow uses four commands:
+
+```shell
+# 1. Generate a signing key (one-time setup)
+melange keygen local-melange.rsa
+
+# 2. Build the package
+melange build package.yaml --signing-key local-melange.rsa --arch x86_64,aarch64
+
+# 3. Create the repository index
+melange index -o packages/x86_64/APKINDEX.tar.gz packages/x86_64/*.apk
+
+# 4. Sign the index
+melange sign-index --signing-key local-melange.rsa packages/x86_64/APKINDEX.tar.gz
+```
+
+## Getting help
+
+Every subcommand accepts `-h` / `--help` to print its usage:
+
+```shell
+melange --help
+melange build --help
+melange convert --help
+```

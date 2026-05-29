@@ -1,0 +1,279 @@
+---
+title: "Build Options and Conditional Compilation in melange"
+sidebarTitle: "Build Options"
+description: "Document named build options and conditional pipeline steps in melange, including how to swap backends, alter packages, and use the --build-option flag."
+---
+
+Build options give you a way to produce alternative variants of a package from the same build file. A named option block can override `vars:` values and modify the set of packages installed in the build environment. Options are inactive by default and must be explicitly enabled at build time using the `--build-option` flag. This makes it straightforward to maintain, for example, an OpenSSL build and a Rustls build of the same package side by side, with full control over which variant is selected at CI time.
+
+---
+
+## Declaring options
+
+Options are declared in the top-level `options:` map. Each key is an option name; its value is a `BuildOption` object that may contain:
+
+- `vars:` — key-value pairs that **override** matching entries in the top-level `vars:` map when the option is enabled.
+- `environment.contents.packages.add` — packages to **add** to the build environment.
+- `environment.contents.packages.remove` — packages to **remove** from the build environment.
+
+```yaml
+options:
+  rustls:
+    vars:
+      with-openssl: --without-openssl
+      with-rustls: --with-rustls
+    environment:
+      contents:
+        packages:
+          add:
+            - rustls-ffi
+          remove:
+            - openssl-dev
+```
+
+When the `rustls` option is enabled, the `with-openssl` and `with-rustls` variables take the new values, `rustls-ffi` is added to the build environment, and `openssl-dev` is removed.
+
+---
+
+## Enabling options at build time
+
+Pass `--build-option <name>` to `melange build` to activate a named option:
+
+```shell
+melange build examples/options.yaml --build-option rustls
+```
+
+Multiple options can be enabled simultaneously:
+
+```shell
+melange build package.yaml --build-option rustls --build-option experimental
+```
+
+<Note>
+  Options that are not explicitly enabled are completely inactive — their variable overrides and package mutations do not apply.
+</Note>
+
+---
+
+## Testing whether an option is enabled
+
+Inside pipeline steps and subpackage definitions you can use `${{options.<name>.enabled}}` in an `if:` expression to conditionally execute steps based on whether an option is active. The value evaluates to the string `'true'` or `'false'`.
+
+```yaml
+pipeline:
+  - if: ${{options.rustls.enabled}} == 'true'
+    runs: |
+      echo "Building with RUSTLS backend"
+```
+
+This can also gate entire subpackages:
+
+```yaml
+subpackages:
+  - if: ${{options.rustls.enabled}} == 'false'
+    name: libcurl-openssl4
+    description: "curl library (openssl backend)"
+    dependencies:
+      provides:
+        - libcurl4=7.87.1
+      provider-priority: 5
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}"/usr/lib
+          mv "${{targets.destdir}}"/usr/lib/libcurl.so.* "${{targets.subpkgdir}}"/usr/lib/
+
+  - if: ${{options.rustls.enabled}} == 'true'
+    name: libcurl-rustls4
+    description: "curl library (rustls backend)"
+    dependencies:
+      provides:
+        - libcurl4=7.87.1
+      provider-priority: 10
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}"/usr/lib
+          mv "${{targets.destdir}}"/usr/lib/libcurl.so.* "${{targets.subpkgdir}}"/usr/lib/
+```
+
+---
+
+## Complete example: curl with swappable TLS backends
+
+The `examples/options.yaml` file in the melange repository shows how to implement an OpenSSL/Rustls swap for curl. The key elements are:
+
+1. **Default `vars:`** — set sensible defaults so the build works without any `--build-option`.
+2. **`options:` block** — override those vars and adjust packages when `rustls` is requested.
+3. **Pipeline `if:` guards** — optionally print diagnostic messages or skip steps.
+4. **Subpackage `if:` guards** — produce the correct library subpackage depending on the backend.
+
+```yaml
+package:
+  name: curl
+  version: 7.87.0
+  epoch: 3
+  description: "URL retrieval utility and library"
+  copyright:
+    - license: MIT
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - brotli-dev
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nghttp2-dev
+      - openssl-dev
+      - wolfi-base
+      - zlib-dev
+
+vars:
+  with-openssl: --with-openssl
+  with-rustls: --without-rustls
+
+options:
+  rustls:
+    vars:
+      with-openssl: --without-openssl
+      with-rustls: --with-rustls
+    environment:
+      contents:
+        packages:
+          add:
+            - rustls-ffi
+          remove:
+            - openssl-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://curl.se/download/curl-${{package.version}}.tar.xz
+      expected-sha256: ee5f1a1955b0ed413435ef79db28b834ea5f0fb7c8cfb1ce47175cc3bee08fff
+
+  - if: ${{options.rustls.enabled}} == 'true'
+    runs: |
+      echo "Building with RUSTLS backend"
+
+  - uses: autoconf/configure
+    with:
+      opts: |
+        --enable-ipv6 \
+        --enable-unix-sockets \
+        ${{vars.with-openssl}} \
+        ${{vars.with-rustls}} \
+        --with-nghttp2 \
+        --with-pic \
+        --disable-ldap \
+        --without-libssh2
+
+  - uses: autoconf/make
+
+  - uses: autoconf/make-install
+
+  - uses: strip
+
+subpackages:
+  - name: "curl-dev"
+    description: "headers for libcurl"
+    pipeline:
+      - uses: split/dev
+    dependencies:
+      runtime:
+        - libcurl4
+
+  - name: "curl-doc"
+    description: "documentation for curl"
+    pipeline:
+      - uses: split/manpages
+
+  - if: ${{options.rustls.enabled}} == 'false'
+    name: "libcurl-openssl4"
+    description: "curl library (openssl backend)"
+    dependencies:
+      provides:
+        - libcurl4=7.87.1
+      provider-priority: 5
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}"/usr/lib
+          mv "${{targets.destdir}}"/usr/lib/libcurl.so.* "${{targets.subpkgdir}}"/usr/lib/
+
+  - if: ${{options.rustls.enabled}} == 'true'
+    name: "libcurl-rustls4"
+    description: "curl library (rustls backend)"
+    dependencies:
+      provides:
+        - libcurl4=7.87.1
+      provider-priority: 10
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}"/usr/lib
+          mv "${{targets.destdir}}"/usr/lib/libcurl.so.* "${{targets.subpkgdir}}"/usr/lib/
+```
+
+---
+
+## Conditional steps without options
+
+Conditions can also be used independently of `options:` to branch on package name, version, or build architecture without needing an explicit option block.
+
+The `examples/conditional.yaml` file demonstrates:
+
+- Using `${{build.arch}}` to print architecture-specific messages
+- Using `${{package.name}}` to guard a step against the wrong package
+- Using `assertions.required-steps` to ensure that at least one branch in a sub-pipeline actually runs
+
+```yaml
+pipeline:
+  # At least one of the steps in the sub-pipeline below must run for the build to pass
+  - assertions:
+      required-steps: 1
+    pipeline:
+      - if: ${{build.arch}} == 'x86_64'
+        runs: |
+          echo "build arch is x86_64!"
+      - if: ${{build.arch}} == 'aarch64'
+        runs: |
+          echo "build arch is aarch64!"
+
+  # This step runs only when the package name matches
+  - if: ${{package.name}} == 'hello'
+    runs: |
+      echo "package name matches 'hello'!"
+
+  # This step is skipped because the condition is false
+  - if: ${{package.name}} != 'hello'
+    runs: |
+      echo "package name doesn't match hello!"
+
+  # Likewise, this fetch step is skipped
+  - uses: fetch
+    if: ${{package.name}} != 'hello'
+    with:
+      uri: https://mirrors.ocf.berkeley.edu/gnu/hello/hello-${{package.version}}.tar.gz
+      expected-sha256: cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+```
+
+<Tip>
+  Use `assertions.required-steps` when you want melange to fail the build if none of the guarded sub-steps execute. This catches misconfiguration where a platform or condition is accidentally not covered.
+</Tip>
+
+---
+
+## BuildOption field reference
+
+<ParamField path="vars" type="map[string]string">
+  Key-value pairs that override matching entries in the top-level `vars:` map when the option is enabled. The overridden values are available throughout the build file as `${{vars.<key>}}`.
+</ParamField>
+
+<ParamField path="environment.contents.packages.add" type="list">
+  APK package names to add to the build environment when the option is enabled.
+</ParamField>
+
+<ParamField path="environment.contents.packages.remove" type="list">
+  APK package names to remove from the build environment when the option is enabled. Useful for replacing a default backend with an alternative one.
+</ParamField>

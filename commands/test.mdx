@@ -1,0 +1,134 @@
+---
+title: "melange test: Run Package Test Pipelines"
+sidebarTitle: "test"
+description: "Reference for melange test — run a YAML test pipeline against a built package in a sandboxed environment, with full flag documentation and examples."
+---
+
+`melange test` runs a declarative test pipeline against an already-built package. The test pipeline is defined in a YAML file using the same pipeline DSL as `melange build`, so every pipeline primitive available during a build — shell commands, named pipelines, assertions — works identically in tests. The command provisions a fresh sandboxed environment (using the same runner options as `build`), installs the package under test, and executes each test step.
+
+## Usage
+
+```shell
+melange test <test.yaml> [package-name] [flags]
+```
+
+The first positional argument is the path to the test YAML file. An optional second argument specifies the package name to test when the YAML describes a multi-package config.
+
+## Examples
+
+```shell
+# Run tests defined in crane-test.yaml
+melange test crane-test.yaml
+
+# Test a specific subpackage
+melange test mypackage-test.yaml mypackage-dev
+
+# Run tests for a specific architecture
+melange test crane-test.yaml --arch x86_64
+
+# Use the Docker runner (required on macOS)
+melange test crane-test.yaml --runner docker
+
+# Attach an interactive TTY on failure for debugging
+melange test crane-test.yaml --interactive
+
+# Pass extra packages needed for the test environment
+melange test crane-test.yaml --test-package-append curl,jq
+```
+
+## Test YAML structure
+
+A test YAML file follows the same structure as a build config. The `test:` block contains the pipeline steps that validate the package:
+
+```yaml
+package:
+  name: crane
+  version: 0.19.1
+  epoch: 0
+  description: "OCI registry client"
+
+test:
+  environment:
+    contents:
+      packages:
+        - crane
+  pipeline:
+    - name: Check crane binary exists
+      runs: crane version
+    - name: Verify help output
+      runs: crane --help
+```
+
+<Note>
+The test pipeline runs inside the same sandbox as the build, so you can use all built-in melange pipeline steps like `runs`, `uses`, and `with` blocks.
+</Note>
+
+## Flags
+
+### Environment
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--arch` | _(all / config default)_ | Architectures to test (e.g., `x86_64,aarch64`) |
+| `--source-dir` | _(empty)_ | Directory containing test fixtures and included source files |
+| `--env-file` | _(empty)_ | Files containing environment variables to pre-load into the test environment |
+| `--test-option` | _(empty)_ | Named test options to enable (analogous to `--build-option` in build) |
+| `--test-package-append` | _(empty)_ | Extra APK packages to install in each test environment |
+| `--keyring-append` / `-k` | _(empty)_ | Extra public key files to trust in the test environment |
+| `--repository-append` / `-r` | _(empty)_ | Extra APK repository URLs or paths to add |
+| `--ignore-signatures` | `false` | Skip repository signature verification |
+| `--timeout` | _(none)_ | Maximum duration for the test run |
+
+### Runner
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--runner` | _(platform default)_ | Sandbox runner: `bubblewrap`, `docker`, or `qemu` |
+| `--cpu` | _(none)_ | CPU resource limit for the test runner |
+| `--cpumodel` | _(none)_ | CPU model string (QEMU runner) |
+| `--memory` | _(none)_ | Memory limit for the test runner |
+| `--disk` | _(none)_ | Disk size for the test environment |
+| `--rm` | `true` | Remove containers and temp dirs after the test completes |
+| `--debug-runner` | `false` | Keep the runner alive after the test finishes or fails |
+| `--interactive` / `-i` | `false` | Attach a TTY to the test sandbox on failure |
+
+### Caching
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cache-dir` | _(empty)_ | Local directory for cached source inputs |
+| `--cache-source` | _(empty)_ | Pre-populate the cache from a directory or GCS/S3 bucket |
+
+### Debugging
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--debug` | `false` | Enable verbose pipeline step logging (sets `-x` in shell steps) |
+| `--workspace-dir` | _(temp dir)_ | Directory mounted as `/home/build` inside the sandbox |
+
+### Inherited
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | `INFO` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Using --source-dir for test fixtures
+
+The `--source-dir` flag tells melange where to find test fixtures, scripts, and other files that need to be present inside the test sandbox. The default is the directory containing the test YAML file, so co-located fixtures are found automatically:
+
+```
+mypackage/
+├── mypackage.yaml       # build config
+├── mypackage-test.yaml  # test config
+└── tests/
+    ├── check-version.sh
+    └── sample-input.json
+```
+
+```shell
+melange test mypackage/mypackage-test.yaml --source-dir mypackage/tests
+```
+
+<Tip>
+Use `--interactive` when debugging a failing test step. melange will drop you into a shell inside the sandboxed environment so you can inspect the package installation, file layout, and run commands manually.
+</Tip>

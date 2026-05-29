@@ -1,0 +1,164 @@
+---
+title: "melange convert: Import Packages from Other Formats"
+sidebarTitle: "convert"
+description: "Reference for melange convert — auto-generate melange YAML from Alpine APKBUILD files, Ruby gems, or Python PyPI packages to accelerate porting work."
+---
+
+`melange convert` is an experimental command that auto-generates melange YAML configuration files from existing upstream package definitions. It supports three sources: Alpine Linux `APKBUILD` files, Ruby gems from RubyGems.org, and Python packages from PyPI. The generated YAML gives you a starting point — it captures dependencies, version, and source information — but will almost always require manual review and editing before it produces a working build.
+
+<Warning>
+`melange convert` is an **experimental command**. The output is a best-effort translation that may contain incorrect dependency mappings, missing pipeline steps, or other issues. Always review the generated YAML before attempting to build it.
+</Warning>
+
+## Subcommands
+
+| Subcommand | Source | Description |
+|------------|--------|-------------|
+| `apkbuild` | Alpine Linux aports | Convert an Alpine `APKBUILD` file into melange YAML |
+| `gem` | RubyGems.org | Convert a Ruby gem into melange YAML |
+| `python` | PyPI | Convert a Python package into melange YAML |
+
+## Common flags
+
+All three subcommands share the following flags inherited from `melange convert`:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--out-dir` / `-o` | `.` | Directory where generated melange YAML files are written |
+| `--wolfi-defaults` | `true` | Add Wolfi repository and keyring to the generated environment config |
+| `--additional-repositories` | _(empty)_ | Extra APK repositories to add to the generated environment config |
+| `--additional-keyrings` | _(empty)_ | Extra keyring entries to add to the generated environment config |
+| `--use-github` | `true` | Use the GitHub API to determine release commit details (Python only; set `GITHUB_TOKEN` to avoid rate limits) |
+| `--use-relmon` | `false` | Use release-monitoring.org to fetch release monitoring data |
+
+---
+
+## melange convert apkbuild
+
+Converts an Alpine Linux `APKBUILD` package definition into a melange YAML file. By default it fetches the `APKBUILD` from the Alpine aports repository on git.alpinelinux.org.
+
+### Usage
+
+```shell
+melange convert apkbuild <package-name> [flags]
+```
+
+### Examples
+
+```shell
+# Convert the libx11 package from Alpine main
+melange convert apkbuild libx11
+
+# Convert and write to a specific directory
+melange convert apkbuild libx11 --out-dir ./generated
+
+# Exclude certain dependency packages from auto-generation
+melange convert apkbuild mypackage --exclude-packages glibc,libc-dev
+
+# Use a custom APKBUILD URI format (e.g. community repo)
+melange convert apkbuild mypkg \
+  --base-uri-format "https://git.alpinelinux.org/aports/plain/community/%s/APKBUILD"
+```
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--base-uri-format` | `https://git.alpinelinux.org/aports/plain/main/%s/APKBUILD` | URI template (with `%s` for the package name) used to fetch the APKBUILD |
+| `--exclude-packages` | _(empty)_ | Comma-separated list of dependency package names to skip during auto-generation |
+
+---
+
+## melange convert gem
+
+Converts a Ruby gem from RubyGems.org into a melange YAML file. It queries the RubyGems JSON API to fetch gem metadata and generates a melange config that builds the gem for the specified Ruby version.
+
+### Usage
+
+```shell
+melange convert gem <gem-name> [flags]
+```
+
+### Examples
+
+```shell
+# Convert the latest fluentd gem
+melange convert gem fluentd
+
+# Convert and output to a specific directory
+melange convert gem fluentd --out-dir ./gems
+
+# Generate config for Ruby 3.3
+melange convert gem rails --ruby-version 3.3
+```
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--base-uri-format` | `https://rubygems.org/api/v1/gems/%s.json` | URI template used to query gem metadata from RubyGems |
+| `--ruby-version` | `3.2` | Ruby version to target throughout the generated manifests |
+
+---
+
+## melange convert python
+
+Converts a Python package from PyPI into a melange YAML file. It queries the PyPI JSON API to fetch package metadata, resolves dependencies, and generates a melange config for the specified Python version.
+
+### Usage
+
+```shell
+melange convert python <package-name> [flags]
+```
+
+### Examples
+
+```shell
+# Convert the latest botocore package
+melange convert python botocore
+
+# Convert a specific version
+melange convert python botocore --package-version 1.34.0
+
+# Convert and output to a directory
+melange convert python requests --out-dir ./python-packages
+
+# Build for Python 3.12
+melange convert python cryptography --python-version 3.12
+
+# Preserve the raw PyPI base URI (instead of the friendly URL)
+melange convert python mypackage --preserve-base-uri
+```
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--base-uri-format` | `https://pypi.org` | Base URI used to query PyPI package metadata |
+| `--package-version` | _(latest)_ | Specific version of the Python package to convert |
+| `--python-version` | `3` | Python major/minor version to target in the generated config |
+| `--preserve-base-uri` | `false` | Use the raw PyPI base URI rather than the friendlier canonical URL form |
+
+---
+
+## Post-conversion checklist
+
+The generated YAML is a starting point. Before building, review and address:
+
+<Accordion title="Common issues in generated configs">
+- **Dependency names**: Alpine/gem/PyPI dependency names rarely map 1:1 to Wolfi package names. Check each entry in `environment.contents.packages`.
+- **Source URLs**: Verify that `fetch` URLs and checksums are correct for the version being packaged.
+- **Build steps**: The generated `pipeline` is a best-effort approximation. Complex packages may need additional steps or different build systems.
+- **Subpackages**: Headers, documentation, and development files may need to be split into `-dev` and `-doc` subpackages.
+- **Licenses**: Confirm the SPDX license identifier is accurate.
+</Accordion>
+
+```shell
+# After converting, attempt a build to see what breaks
+melange convert python requests --out-dir ./generated
+melange build ./generated/requests.yaml --runner docker
+```
+
+<Tip>
+Set the `GITHUB_TOKEN` environment variable when running `melange convert python` with `--use-github` to avoid hitting the GitHub API rate limit during commit hash resolution.
+</Tip>
