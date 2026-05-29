@@ -1,7 +1,7 @@
 ---
 title: "Build Options and Conditional Compilation in melange"
 sidebarTitle: "Build Options"
-description: "Document named build options and conditional pipeline steps in melange, including how to swap backends, alter packages, and use the --build-option flag."
+description: "Reference for named build options and conditional pipeline steps in melange, covering backend swaps, package mutations, and the --build-option flag."
 ---
 
 Build options give you a way to produce alternative variants of a package from the same build file. A named option block can override `vars:` values and modify the set of packages installed in the build environment. Options are inactive by default and must be explicitly enabled at build time using the `--build-option` flag. This makes it straightforward to maintain, for example, an OpenSSL build and a Rustls build of the same package side by side, with full control over which variant is selected at CI time.

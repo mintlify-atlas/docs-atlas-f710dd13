@@ -1,7 +1,7 @@
 ---
 title: "Multi-Architecture APK Builds with melange and QEMU"
 sidebarTitle: "Multi-Architecture"
-description: "Build APK packages for x86_64, aarch64, armv7, ppc64le, s390x, and more using QEMU emulation — no cross-compilation required."
+description: "Build APK packages for x86_64, aarch64, armv7, ppc64le, s390x, and more using QEMU user-mode emulation — no cross-compilation toolchain required."
 ---
 
 One of melange's headline features is that it builds for multiple CPU architectures out of the box. When you run `melange build`, it iterates over every supported architecture and produces a separate set of APK files for each one — all without requiring you to write cross-compilation logic in your pipelines. QEMU user-mode emulation handles running foreign-architecture binaries transparently.
@@ -35,7 +35,7 @@ package:
 
 Running the build produces an output directory organised by architecture:
 
-```
+```text
 packages/
 ├── x86_64/
 │   ├── hello-2.12-r0.apk
@@ -123,10 +123,10 @@ melange supports three runners for executing pipeline steps. The right choice de
     **Linux only.** Uses `bwrap` to create a lightweight container from the guest directory. Fastest option on Linux; no Docker daemon required. The default on Linux hosts.
   </Card>
   <Card title="docker" icon="docker">
-    **Linux and macOS.** Runs pipeline steps inside a Docker container. Requires Docker Desktop or a Docker daemon. Useful when bubblewrap is unavailable or Docker is already part of your workflow.
+    **Linux and macOS.** Runs pipeline steps inside a Docker container. Requires Docker Desktop or a Docker daemon. The default on macOS hosts and any non-Linux platform.
   </Card>
   <Card title="qemu" icon="microchip">
-    **Full VM.** Boots a QEMU virtual machine for each build. Required for strict isolation or when `binfmt_misc` is not available. Slower than bubblewrap but most portable. The default on macOS hosts.
+    **Full VM.** Boots a QEMU virtual machine for each build. Required for strict isolation or when `binfmt_misc` is not available. Slower than bubblewrap but most portable.
   </Card>
 </CardGroup>
 

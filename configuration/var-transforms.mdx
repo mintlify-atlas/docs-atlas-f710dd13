@@ -32,7 +32,7 @@ Each entry in `var-transforms:` is an object with four required fields:
   A Go regular expression matched against the value of `from`. Capture groups (`(\d+)`, etc.) can be referenced in `replace`.
 
   ```yaml
-  match: \\.(\d+)$
+  match: \.(\d+)$
   ```
 </ParamField>
 
@@ -75,7 +75,7 @@ package:
 ```yaml
 var-transforms:
   - from: ${{package.version}}
-    match: \\.(\d+)$
+    match: \.(\d+)$
     replace: +$1
     to: mangled-package-version
 ```
@@ -133,7 +133,7 @@ You can declare multiple entries in `var-transforms:`. They are applied in order
 ```yaml
 var-transforms:
   - from: ${{package.version}}
-    match: \\.(\d+)$
+    match: \.(\d+)$
     replace: +$1
     to: upstream-version
 

@@ -37,7 +37,7 @@ melange keeps three separate directories cleanly separated throughout a build.
 
 Given a project at `/home/user/src` containing `main.go`, `go.mod`, and `go.sum`, with `busybox` as the only build dependency, the directory layout looks like this:
 
-```
+```text
 /home/user/src                <-- source directory
 /home/user/src/main.go        <-- original file in source
 /home/user/src/go.mod         <-- original file in source
@@ -88,11 +88,11 @@ melange executes the core `BuildPackage()` routine in the following order:
   <Step title="Emit APK files">
     The final package and all subpackages are written to `--out-dir` (default: `./packages/`), organized by architecture.
   </Step>
-  <Step title="Generate and sign the index">
-    If `--generate-index` is enabled (the default), an `APKINDEX.tar.gz` is produced and optionally signed.
-  </Step>
   <Step title="Clean up">
     The guest and workspace directories are removed unless `--cleanup=false` is passed.
+  </Step>
+  <Step title="Generate and sign the index">
+    If `--generate-index` is enabled (the default), an `APKINDEX.tar.gz` is produced and optionally signed.
   </Step>
 </Steps>
 

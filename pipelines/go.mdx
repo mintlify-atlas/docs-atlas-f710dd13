@@ -137,10 +137,16 @@ The `go/bump` pipeline updates Go module dependencies before compilation. It wra
 
 ### Key inputs
 
-| Input | Default | Description |
-|---|---|---|
-| `deps` | — | Space-separated `module@version` pairs to update |
-| `work` | `false` | Use `go work vendor` instead of `go mod vendor` (for Go workspaces) |
+| Input | Default | Required | Description |
+|---|---|---|---|
+| `deps` | — | ✅ | Space-separated `module@version` pairs to update |
+| `modroot` | `.` | — | Directory containing `go.mod`; the pipeline `cd`s here before bumping |
+| `go-version` | `""` | — | Go version to set in `go.mod` syntax |
+| `replaces` | — | — | Replace directives to add to `go.mod` |
+| `tidy` | `true` | — | Run `go mod tidy` before and after the bump |
+| `show-diff` | `false` | — | Print a diff of `go.mod` changes |
+| `tidy-compat` | `""` | — | Go version for which the tidied `go.mod`/`go.sum` should be compatible |
+| `work` | `false` | — | Use `go work vendor` instead of `go mod vendor` (for Go workspaces) |
 
 ### Example
 

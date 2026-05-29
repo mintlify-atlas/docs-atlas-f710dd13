@@ -19,7 +19,7 @@ The `git-checkout` pipeline clones a remote git repository into the workspace. I
 | `tag` | — | — | Tag to check out. Mutually exclusive with `branch`. |
 | `branch` | — | — | Branch to check out. Mutually exclusive with `tag`. |
 | `expected-commit` | — | — | Expected commit SHA-1 hash. Fails the build if the resolved commit does not match. |
-| `depth` | `1` (or `-1` when `branch`+`expected-commit` are both set) | — | Clone depth. Use `-1` for full history. |
+| `depth` | `unset` (resolves to `1` for shallow clones; resolves to `-1` when both `branch` and `expected-commit` are set) | — | Clone depth. Use `-1` for full history. |
 | `recurse-submodules` | `false` | — | Pass `--recurse-submodules` to `git clone` |
 | `shallow-submodules` | `false` | — | Use `--shallow-submodules` when recursing (requires `recurse-submodules: true`) |
 | `submodule-jobs` | `1` | — | Concurrent jobs for submodule cloning |

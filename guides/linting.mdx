@@ -1,5 +1,5 @@
 ---
-title: "Post-Build Linting: Catching Package Errors Early"
+title: "Post-Build Package Linting: Catch Packaging Errors Early"
 sidebarTitle: "Linting"
 description: "Learn how melange's built-in linters catch common packaging mistakes after every build, and how to handle non-standard paths using the -compat convention."
 ---
@@ -52,13 +52,13 @@ melange separates linters into two categories: those that **must pass** (build f
 
 The default `--lint-require` linters are:
 
-```
+```text
 dev, infodir, libtool/la-files, setuidgid, tempdir, usrmerge, varempty, worldwrite
 ```
 
 The default `--lint-warn` linters are:
 
-```
+```text
 binaryarch, cudaruntimelib, dll, duplicate, dylib, lddcheck, maninfo, nonlinux,
 object, opt, pkgconf, python/docs, python/multiple, python/test, sbom, srv,
 staticarchive, strip, unsupportedarch, usrlocal

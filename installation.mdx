@@ -1,5 +1,5 @@
 ---
-title: "Installing melange on Linux, macOS, and Docker"
+title: "How to Install melange on Linux, macOS, and Docker"
 sidebarTitle: "Installation"
 description: "Install melange via Homebrew, go install, the cgr.dev container image, or by building from source — with shell completion setup included."
 ---
@@ -31,7 +31,7 @@ Homebrew handles updates through `brew upgrade melange`.
 
 ---
 
-### `go install` (any platform with Go 1.21+)
+### `go install` (any platform with Go 1.22+)
 
 If you have Go installed, you can build and install the latest melange release directly from source using `go install`:
 
@@ -149,6 +149,14 @@ melange completion fish | source
 
 # Load permanently (run once)
 melange completion fish > ~/.config/fish/completions/melange.fish
+```
+
+```shell PowerShell
+# Load for the current session
+melange completion powershell | Out-String | Invoke-Expression
+
+# Load permanently (run once)
+melange completion powershell > $PROFILE.CurrentUserAllHosts
 ```
 
 </CodeGroup>

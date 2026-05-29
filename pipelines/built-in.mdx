@@ -75,6 +75,7 @@ Downloads a source archive from a URI, verifies its checksum, and extracts it in
 | `retry-limit` | `5` | Number of download retries |
 | `purl-name` | `${{package.name}}` | PURL name for SBOM generation |
 | `purl-version` | `${{package.version}}` | PURL version for SBOM generation |
+| `reason` | — | Human-readable reason for using `fetch` instead of `git-checkout` |
 
 <Warning>
   Either `expected-sha256`, `expected-sha512`, or `expected-none` must be set. Builds fail if none of these are provided, ensuring supply-chain integrity.

@@ -71,6 +71,7 @@ The test pipeline runs inside the same sandbox as the build, so you can use all 
 |------|---------|-------------|
 | `--arch` | _(all / config default)_ | Architectures to test (e.g., `x86_64,aarch64`) |
 | `--source-dir` | _(empty)_ | Directory containing test fixtures and included source files |
+| `--pipeline-dirs` | _(empty)_ | Directories used to extend defined built-in pipelines |
 | `--env-file` | _(empty)_ | Files containing environment variables to pre-load into the test environment |
 | `--test-option` | _(empty)_ | Named test options to enable (analogous to `--build-option` in build) |
 | `--test-package-append` | _(empty)_ | Extra APK packages to install in each test environment |
@@ -78,6 +79,7 @@ The test pipeline runs inside the same sandbox as the build, so you can use all 
 | `--repository-append` / `-r` | _(empty)_ | Extra APK repository URLs or paths to add |
 | `--ignore-signatures` | `false` | Skip repository signature verification |
 | `--timeout` | _(none)_ | Maximum duration for the test run |
+| `--apk-cache-dir` | _(system cache)_ | Directory used for cached APK packages |
 
 ### Runner
 

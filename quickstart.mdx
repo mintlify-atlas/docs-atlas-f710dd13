@@ -1,5 +1,5 @@
 ---
-title: "Get started with melange: Build your first APK"
+title: "Get started with melange: Build your first APK package"
 sidebarTitle: "Quickstart"
 description: "Build the GNU Hello APK package from scratch using melange — covering keygen, the build pipeline, signing, and inspecting the output packages directory."
 ---
@@ -141,7 +141,7 @@ docker run --privileged --rm \
 </CodeGroup>
 
 <Note>
-  The `--privileged` flag is required when running inside Docker because melange uses [bubblewrap](https://github.com/containers/bubblewrap) to create the isolated build guest, which requires elevated capabilities. When running melange natively outside a container, Docker or Podman must still be available on the host.
+  The `--privileged` flag is required when running inside Docker because melange uses [bubblewrap](https://github.com/containers/bubblewrap) to create the isolated build guest, which requires elevated capabilities. When running melange natively on Linux, bubblewrap is used directly and no container daemon is required. On macOS, Docker or Podman must be available because bubblewrap is Linux-only.
 </Note>
 
 You will see melange bootstrap the build environment, fetch the source tarball, run each pipeline step, and emit the final package. A successful run ends with output similar to:

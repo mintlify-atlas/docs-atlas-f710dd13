@@ -1,5 +1,5 @@
 ---
-title: "Template Substitutions in melange Build Files"
+title: "melange Template Substitutions: Built-in Variable Reference"
 sidebarTitle: "Substitutions"
 description: "Reference for all built-in melange template substitutions, including package, targets, build, and context variables, plus custom vars."
 ---
@@ -21,7 +21,7 @@ The following table lists every default substitution provided by melange. These 
 | `${{package.epoch}}` | The package epoch as declared in `package.epoch` |
 | `${{package.full-version}}` | Shorthand for `${{package.version}}-r${{package.epoch}}` |
 | `${{package.description}}` | The package description string |
-| `${{package.srcdir}}` | The source directory inside the build sandbox (`/home/build` by default, or the value of `--source-dir`) |
+| `${{package.srcdir}}` | The source directory inside the build sandbox — always `/home/build` |
 
 ### Context substitutions
 

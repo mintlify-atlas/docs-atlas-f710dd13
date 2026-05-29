@@ -1,5 +1,5 @@
 ---
-title: "Testing APK Packages with melange's test Command"
+title: "Validate APK Packages with the melange test Command"
 sidebarTitle: "Testing"
 description: "Define test pipelines inside your melange YAML, run them with melange test, and validate packages against local or remote repositories."
 ---
@@ -162,10 +162,10 @@ test:
 
 ## Using predefined pipelines in tests
 
-Test pipelines support `uses:` steps just like build pipelines. Point `--pipeline-dir` at a directory containing custom pipeline YAML files:
+Test pipelines support `uses:` steps just like build pipelines. Point `--pipeline-dirs` at a directory containing custom pipeline YAML files:
 
 ```shell
-melange test ./mypackage-test.yaml --pipeline-dir ./pipelines
+melange test ./mypackage-test.yaml --pipeline-dirs ./pipelines
 ```
 
 ## Running tests
@@ -200,7 +200,7 @@ melange test ./testfile.yaml mypackage=2.2.0-r2
 | `--arch` | Architecture to test for (e.g., `aarch64`, `x86_64`). Default: host arch. |
 | `--runner` | Runner to use: `bubblewrap`, `docker`, or `qemu`. |
 | `--source-dir` | Directory containing test fixture files to copy into the workspace. |
-| `--pipeline-dir` | Directory with custom pipeline definitions. |
+| `--pipeline-dirs` | Directory (or directories) with custom pipeline definitions. |
 | `--keyring-append` | Path or URL to additional signing keys for the APK resolver. |
 | `--repository-append` | Path or URL to additional APK repositories. |
 | `--test-package-append` | Extra packages added to every test environment. |
